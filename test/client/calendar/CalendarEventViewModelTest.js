@@ -1,7 +1,7 @@
 //@flow
 import o from "ospec/ospec.js"
 import {CalendarEventViewModel} from "../../../src/calendar/CalendarEventViewModel"
-import {downcast} from "../../../src/api/common/utils/Utils"
+import {downcast, neverNull} from "../../../src/api/common/utils/Utils"
 import {LazyLoaded} from "../../../src/api/common/utils/LazyLoaded"
 import type {MailboxDetail} from "../../../src/mail/MailModel"
 import type {CalendarEvent} from "../../../src/api/entities/tutanota/CalendarEvent"
@@ -141,9 +141,7 @@ o.spec("CalendarEventViewModel", function () {
 
 	o("in writable calendar w/ guests", function () {
 		const calendars = makeCalendars("shared")
-		const mailboxDetail = makeMailboxDetail()
 		const userController = makeUserController()
-		const distributor = makeDistributor()
 		addCapability(userController.user, calendarGroupId, ShareCapability.Write)
 		const existingEvent = createCalendarEvent({
 			summary: "existing event",
@@ -232,11 +230,64 @@ o.spec("CalendarEventViewModel", function () {
 		})
 	})
 
-	o("create event", async function () {
-		const calendars = makeCalendars("own")
-		const viewModel = init({calendars, existingEvent: null})
+	o.spec("create event", function () {
+		o("own calendar, no guests", async function () {
+			const calendars = makeCalendars("own")
+			const calendarModel = makeCalendarModel()
+			const distributor = makeDistributor()
+			const viewModel = init({calendars, existingEvent: null, calendarModel, distributor})
+			const summary = "Summary"
+			viewModel.summary(summary)
 
-		viewModel.onOkPressed()
+			o(await viewModel.onOkPressed()).deepEquals({status: "ok", askForUpdates: null})
+
+			const [createdEvent] = calendarModel.createEvent.calls[0].args
+			o(createdEvent.summary).equals("Summary")
+			o(distributor.sendInvite.calls).deepEquals([])
+		})
+
+		o("own calendar, new guests", async function () {
+			const calendars = makeCalendars("own")
+			const calendarModel = makeCalendarModel()
+			const distributor = makeDistributor()
+			const viewModel = init({calendars, existingEvent: null, calendarModel, distributor})
+			const newGuest = "new-attendee@example.com"
+			viewModel.addAttendee(newGuest)
+
+			o(await viewModel.onOkPressed()).deepEquals({status: "ok", askForUpdates: null})
+			o(calendarModel.createEvent.calls.length).equals(1)("created event")
+			o(distributor.sendInvite.calls[0].args[2]).deepEquals([createEncryptedMailAddress({address: newGuest})])
+		})
+
+		o.only("own calendar, same guests, agree on updates", async function () {
+			const calendars = makeCalendars("own")
+			const calendarModel = makeCalendarModel()
+			const distributor = makeDistributor()
+			const guest = "new-attendee@example.com"
+			const existingEvent = createCalendarEvent({
+				attendees: [
+					createCalendarEventAttendee({
+						address: createEncryptedMailAddress({address: guest})
+					})
+				],
+				organizer: mailAddress,
+			})
+			const viewModel = init({calendars, existingEvent, calendarModel, distributor})
+			viewModel.onStartDateSelected(new Date(2020, 4, 3))
+
+			const result = await viewModel.onOkPressed()
+			if (result.status !== "ok") {
+				throw new Error("Result is not ok")
+			}
+			if (result.askForUpdates == null) {
+				throw new Error("Did not ask for updates")
+			}
+			o(distributor.sendUpdate.calls).deepEquals([])
+
+			await neverNull(result.askForUpdates)(true)
+			o(calendarModel.createEvent.calls.length).equals(1)("created event")
+			o(distributor.sendUpdate.calls[0].args[1]).deepEquals([createEncryptedMailAddress({address: guest})])
+		})
 	})
 })
 

@@ -36,7 +36,6 @@ import {createEncryptedMailAddress} from "../api/entities/tutanota/EncryptedMail
 import {remove} from "../api/common/utils/ArrayUtils"
 import {load} from "../api/main/Entity"
 import {NotFoundError} from "../api/common/error/RestError"
-import {worker} from "../api/main/WorkerClient"
 import type {CalendarRepeatRule} from "../api/entities/tutanota/CalendarRepeatRule"
 import {isSameId, listIdPart} from "../api/common/EntityFunctions"
 import {UserAlarmInfoTypeRef} from "../api/entities/sys/UserAlarmInfo"
@@ -44,8 +43,13 @@ import type {User} from "../api/entities/sys/User"
 import {incrementDate} from "../api/common/utils/DateUtils"
 import type {CalendarUpdateDistributor} from "./CalendarUpdateDistributor"
 import type {IUserController} from "../api/main/UserController"
+import type {TranslationKeyType} from "../misc/TranslationKey"
 
 const TIMESTAMP_ZERO_YEAR = 1970
+
+export type EventCreateResult =
+	| {status: "ok", askForUpdates: ?((bool) => Promise<void>)}
+	| {status: "error", error: TranslationKeyType}
 
 export class CalendarEventViewModel {
 	+summary: Stream<string>;
@@ -210,6 +214,7 @@ export class CalendarEventViewModel {
 		this.endTime = value
 	}
 
+	// TODO: add a name here
 	addAttendee(mailAddress: string) {
 		const attendee = createCalendarEventAttendee({
 			status: CalendarAttendeeStatus.NEEDS_ACTION,
@@ -356,7 +361,7 @@ export class CalendarEventViewModel {
 		}
 	}
 
-	onOkPressed(): boolean {
+	onOkPressed(): Promise<EventCreateResult> {
 		// We have to use existing instance to get all the final fields correctly
 		// Using clone feels hacky but otherwise we need to save all attributes of the existing event somewhere and if dialog is
 		// cancelled we also don't want to modify passed event
@@ -372,9 +377,7 @@ export class CalendarEventViewModel {
 			const parsedStartTime = parseTime(this.startTime)
 			const parsedEndTime = parseTime(this.endTime)
 			if (!parsedStartTime || !parsedEndTime) {
-				// TODO: error dialog
-				// Dialog.error("timeFormatInvalid_msg")
-				return false
+				return Promise.resolve({status: "error", error: "timeFormatInvalid_msg"})
 			}
 			startDate.setHours(parsedStartTime.hours)
 			startDate.setMinutes(parsedStartTime.minutes)
@@ -386,9 +389,7 @@ export class CalendarEventViewModel {
 		}
 
 		if (endDate.getTime() <= startDate.getTime()) {
-			// TODO: error dialog
-			// Dialog.error('startAfterEnd_label')
-			return false
+			return Promise.resolve({status: "error", error: "timeFormatInvalid_msg"})
 		}
 		newEvent.startTime = startDate
 		newEvent.description = this.note()
@@ -418,9 +419,8 @@ export class CalendarEventViewModel {
 			} else if (stopType === EndType.UntilDate) {
 				const repeatEndDate = getStartOfNextDayWithZone(new Date(repeat.endValue), this._zone)
 				if (repeatEndDate.getTime() < getEventStart(newEvent, this._zone)) {
-					// TODO: error dialog
 					// Dialog.error("startAfterEnd_label")
-					return false
+					return Promise.resolve({status: "error", error: "startAfterEnd_label"})
 				} else {
 					// We have to save repeatEndDate in the same way we save start/end times because if one is timzone
 					// dependent and one is not then we have interesting bugs in edge cases (event created in -11 could
@@ -435,83 +435,128 @@ export class CalendarEventViewModel {
 		if (this.existingEvent) {
 			newEvent.sequence = String(filterInt(this.existingEvent.sequence) + 1)
 		}
-		let newAttendees = []
-		let existingAttendees = []
+		let newAttendees: Array<CalendarEventAttendee> = []
+		let existingAttendees: Array<CalendarEventAttendee> = []
+		const {existingEvent} = this
 
 		newEvent.organizer = this.organizer
 
-		// TODO: invites
-		// if (isOwnEvent) {
-		// 	if (existingEvent) {
-		// 		attendees.forEach((a) => {
-		// 			if (existingEvent.attendees.includes(a)) {
-		// 				existingAttendees.push(a)
-		// 			} else {
-		// 				newAttendees.push(a)
-		// 			}
-		// 		})
-		// 	} else {
-		// 		newAttendees = attendees
-		// 	}
-		// } else {
-		// 	if (ownAttendee && participationStatus() !== CalendarAttendeeStatus.NEEDS_ACTION
-		// 		&& ownAttendee.status !== participationStatus()) {
-		// 		ownAttendee.status = participationStatus()
-		//
-		// 		newEvent.attendees = attendees
-		// 		sendCalendarInviteResponse(newEvent, createMailAddress({
-		// 			name: ownAttendee.address.name,
-		// 			address: ownAttendee.address.address,
-		// 		}), participationStatus())
-		// 	}
-		// }
+		if (this._viewingOwnEvent()) {
+			if (existingEvent) {
+				this.attendees.forEach((a) => {
+					if (existingEvent.attendees.find(ea => ea.address.address === a.address.address)) {
+						existingAttendees.push(a)
+					} else {
+						newAttendees.push(a)
+					}
+				})
+			} else {
+				newAttendees = this.attendees
+			}
+		} else {
+			// if (ownAttendee && participationStatus() !== CalendarAttendeeStatus.NEEDS_ACTION
+			// 	&& ownAttendee.status !== participationStatus()) {
+			// 	ownAttendee.status = participationStatus()
+			//
+			// 	newEvent.attendees = attendees
+			// 	sendCalendarInviteResponse(newEvent, createMailAddress({
+			// 		name: ownAttendee.address.name,
+			// 		address: ownAttendee.address.address,
+			// 	}), participationStatus())
+			// }
+		}
 
-		const askedUpdate = Promise.resolve(false)
-		// TODO: move this to the dialog
-		//;(existingAttendees.length ? Dialog.confirm("sendEventUpdate_msg") : Promise.resolve(false))
-		askedUpdate
-			.then((shouldSendOutUpdates) => {
-				let updatePromise
-				const safeExistingEvent = this.existingEvent
-				if (safeExistingEvent == null
-					|| safeExistingEvent._ownerGroup !== newEvent._ownerGroup // event has been moved to another calendar
-					|| newEvent.startTime.getTime() !== safeExistingEvent.startTime.getTime()
-					|| !repeatRulesEqual(newEvent.repeatRule, safeExistingEvent.repeatRule)) {
-					// if values of the existing events have changed that influence the alarm time then delete the old event and create a new one.
-					assignEventId(newEvent, this._zone, groupRoot)
-					// Reset ownerEncSessionKey because it cannot be set for new entity, it will be assigned by the CryptoFacade
-					newEvent._ownerEncSessionKey = null
-					// Reset permissions because server will assign them
-					downcast(newEvent)._permissions = null
+		const doCreateEvent = () => {
+			if (existingEvent == null
+				|| existingEvent._ownerGroup !== newEvent._ownerGroup // event has been moved to another calendar
+				|| newEvent.startTime.getTime() !== existingEvent.startTime.getTime()
+				|| !repeatRulesEqual(newEvent.repeatRule, existingEvent.repeatRule)
+			) {
+				// if values of the existing events have changed that influence the alarm time then delete the old event and create a new
+				// one.
+				assignEventId(newEvent, this._zone, groupRoot)
+				// Reset ownerEncSessionKey because it cannot be set for new entity, it will be assigned by the CryptoFacade
+				newEvent._ownerEncSessionKey = null
+				// Reset permissions because server will assign them
+				downcast(newEvent)._permissions = null
 
-					// We don't want to pass event from ics file to the facade because it's just a template event and there's nothing to
-					// clean up.
-					const oldEventToPass = safeExistingEvent && safeExistingEvent._ownerGroup ? safeExistingEvent : null
-					updatePromise = this._calendarModel.createEvent(newEvent, newAlarms, oldEventToPass)
-				} else {
-					updatePromise = this._calendarModel.updateEvent(newEvent, newAlarms, safeExistingEvent)
+				// We don't want to pass event from ics file to the facade because it's just a template event and there's nothing to clean
+				// up.
+				const oldEventToPass = existingEvent && existingEvent._ownerGroup ? existingEvent : null
+				return this._calendarModel.createEvent(newEvent, newAlarms, oldEventToPass)
+			} else {
+				return this._calendarModel.updateEvent(newEvent, newAlarms, existingEvent)
+			}
+		}
+
+		if (existingAttendees.length) {
+			// ask for update
+			return Promise.resolve({
+				status: "ok",
+				askForUpdates: (sendOutUpdate) => {
+					const awaitUpdate = sendOutUpdate && existingAttendees.length
+						? this._distributor.sendUpdate(newEvent, existingAttendees.map(a => a.address))
+						: Promise.resolve()
+					return awaitUpdate.then(doCreateEvent)
 				}
-
-				// TODO: send out invites
-				// updatePromise
-				// 	// Let the dialog close first to avoid glitches
-				// 	.delay(200)
-				// 	.then(() => {
-				// 		if (newAttendees.length) {
-				// 			sendCalendarInvite(newEvent, newAlarms, newAttendees.map(a => a.address))
-				// 		}
-				// 		if (shouldSendOutUpdates) {
-				// 			sendCalendarUpdate(newEvent, existingAttendees.map(a => a.address))
-				// 		}
-				// 		if (safeExistingEvent) {
-				// 			const removedAttendees = safeExistingEvent.attendees.filter(att => !this.attendees.includes(att))
-				// 			if (removedAttendees.length > 0) {
-				// 				sendCalendarCancellation(safeExistingEvent, removedAttendees.map(a => a.address))
-				// 			}
-				// 		}
-				// 	})
 			})
-		return true
+		} else {
+			// just create the event
+			return doCreateEvent().then(() => {
+				// TODO: alarms
+				if (newAttendees.length) {
+					return this._distributor.sendInvite(newEvent, [], newAttendees.map(a => a.address))
+				}
+			}).then(() => {
+				return {
+					status: "ok",
+					askForUpdates: null
+				}
+			})
+		}
+		// askedUpdate
+		// 	.then((shouldSendOutUpdates) => {
+		// 		let updatePromise
+		// 		const safeExistingEvent = this.existingEvent
+		// 		if (safeExistingEvent == null
+		// 			|| safeExistingEvent._ownerGroup !== newEvent._ownerGroup // event has been moved to another calendar
+		// 			|| newEvent.startTime.getTime() !== safeExistingEvent.startTime.getTime()
+		// 			|| !repeatRulesEqual(newEvent.repeatRule, safeExistingEvent.repeatRule)) {
+		// 			// if values of the existing events have changed that influence the alarm time then delete the old event and create a new one.
+		// 			assignEventId(newEvent, this._zone, groupRoot)
+		// 			// Reset ownerEncSessionKey because it cannot be set for new entity, it will be assigned by the CryptoFacade
+		// 			newEvent._ownerEncSessionKey = null
+		// 			// Reset permissions because server will assign them
+		// 			downcast(newEvent)._permissions = null
+		//
+		// 			// We don't want to pass event from ics file to the facade because it's just a template event and there's nothing to
+		// 			// clean up.
+		// 			const oldEventToPass = safeExistingEvent && safeExistingEvent._ownerGroup ? safeExistingEvent : null
+		// 			updatePromise = this._calendarModel.createEvent(newEvent, newAlarms, oldEventToPass)
+		// 		} else {
+		// 			updatePromise = this._calendarModel.updateEvent(newEvent, newAlarms, safeExistingEvent)
+		// 		}
+		//
+		// 		// TODO: send out invites
+		// 		// updatePromise
+		// 		// 	// Let the dialog close first to avoid glitches
+		// 		// 	.delay(200)
+		// 		// 	.then(() => {
+		// 		// 		if (newAttendees.length) {
+		// 		// 			sendCalendarInvite(newEvent, newAlarms, newAttendees.map(a => a.address))
+		// 		// 		}
+		// 		// 		if (shouldSendOutUpdates) {
+		// 		// 			sendCalendarUpdate(newEvent, existingAttendees.map(a => a.address))
+		// 		// 		}
+		// 		// 		if (safeExistingEvent) {
+		// 		// 			const removedAttendees = safeExistingEvent.attendees.filter(att => !this.attendees.includes(att))
+		// 		// 			if (removedAttendees.length > 0) {
+		// 		// 				sendCalendarCancellation(safeExistingEvent, removedAttendees.map(a => a.address))
+		// 		// 			}
+		// 		// 		}
+		// 		// 	})
+		// 	})
+		// return true
 	}
 
 	selectGoing(going: CalendarAttendeeStatusEnum) {
