@@ -29,7 +29,6 @@ import {
 	getEventStart,
 	getStartOfDayWithZone,
 	getStartOfNextDayWithZone,
-	getTimeZone,
 	hasCapabilityOnGroup,
 	parseTime,
 	timeString,
@@ -94,6 +93,7 @@ export class CalendarEventViewModel {
 		calendarModel: CalendarModel,
 		mailboxDetail: MailboxDetail,
 		date: Date,
+		zone: string,
 		calendars: Map<Id, CalendarInfo>,
 		existingEvent?: ?CalendarEvent
 	) {
@@ -110,7 +110,7 @@ export class CalendarEventViewModel {
 		this.allDay = stream(true)
 		this.amPmFormat = userController.userSettingsGroupRoot.timeFormat === TimeFormat.TWELVE_HOURS
 		this.existingEvent = existingEvent
-		this._zone = getTimeZone()
+		this._zone = zone
 		this.alarms = []
 		this._ownAttendee = this.attendees.find(a => this.possibleOrganizers.includes(a.address.address))
 		this.going = this._ownAttendee ? getAttendeeStatus(this._ownAttendee) : CalendarAttendeeStatus.NEEDS_ACTION
@@ -163,7 +163,7 @@ export class CalendarEventViewModel {
 				this.selectedCalendar(calendarForGroup)
 			}
 			this.allDay(isAllDayEvent(existingEvent))
-			this.startDate = getStartOfDayWithZone(getEventEnd(existingEvent, this._zone), this._zone)
+			this.startDate = getStartOfDayWithZone(getEventStart(existingEvent, this._zone), this._zone)
 			if (this.allDay()) {
 				this.startTime = timeString(getEventStart(existingEvent, this._zone), this.amPmFormat)
 				this.endTime = timeString(getEventEnd(existingEvent, this._zone), this.amPmFormat)
@@ -362,6 +362,7 @@ export class CalendarEventViewModel {
 	 */
 	deleteEvent(): Promise<bool> {
 		const event = this.existingEvent
+		// TODO: check if it works
 		if (event) {
 			const awaitCancellation = this._viewingOwnEvent() && !this._isInSharedCalendar && event.attendees.length
 				? this._distributor.sendCancellation(event, event.attendees.map(a => a.address))
@@ -385,7 +386,6 @@ export class CalendarEventViewModel {
 			startDate = getAllDayDateUTCFromZone(startDate, this._zone)
 			endDate = getAllDayDateUTCFromZone(getStartOfNextDayWithZone(endDate, this._zone), this._zone)
 		} else {
-			endDate = incrementDate(endDate, 1)
 			const parsedStartTime = parseTime(this.startTime)
 			const parsedEndTime = parseTime(this.endTime)
 			if (!parsedStartTime || !parsedEndTime) {

@@ -22,19 +22,21 @@ import type {CalendarUpdateDistributor} from "../../../src/calendar/CalendarUpda
 import type {IUserController} from "../../../src/api/main/UserController"
 import {createEncryptedMailAddress} from "../../../src/api/entities/tutanota/EncryptedMailAddress"
 import {CalendarModel} from "../../../src/calendar/CalendarModel"
+import {getAllDayDateUTCFromZone} from "../../../src/calendar/CalendarUtils"
+import {DateTime} from "luxon"
 
 const calendarGroupId = "0"
 const now = new Date(2020, 4, 25, 13, 40)
+const zone = "Europe/Berlin"
 const mailAddress = "address@tutanota.com"
 const userId = "12356"
 
 o.spec("CalendarEventViewModel", function () {
-
 	o("init with existing event", function () {
 		const existingEvent = createCalendarEvent({
 			summary: "existing event",
-			startTime: new Date(2020, 4, 26, 12),
-			endTime: new Date(2020, 4, 26, 13),
+			startTime: DateTime.fromObject({year: 2020, month: 5, day: 26, hour: 12, zone}).toJSDate(),
+			endTime: DateTime.fromObject({year: 2020, month: 5, day: 26, hour: 13, zone}).toJSDate(),
 			description: "note",
 			location: "location",
 			_ownerGroup: calendarGroupId,
@@ -42,8 +44,8 @@ o.spec("CalendarEventViewModel", function () {
 		const viewModel = init({calendars: makeCalendars("own"), existingEvent})
 
 		o(viewModel.summary()).equals(existingEvent.summary)
-		o(viewModel.startDate.toISOString()).equals(new Date(2020, 4, 26).toISOString())
-		o(viewModel.endDate.toISOString()).equals(new Date(2020, 4, 26).toISOString())
+		o(viewModel.startDate.toISOString()).equals(DateTime.fromObject({year: 2020, month: 5, day: 26}).toJSDate().toISOString())
+		o(viewModel.endDate.toISOString()).equals(DateTime.fromObject({year: 2020, month: 5, day: 26}).toJSDate().toISOString())
 		o(viewModel.startTime).equals("12:00")
 		o(viewModel.endTime).equals("13:00")
 		o(viewModel.note()).equals(existingEvent.description)
@@ -52,6 +54,22 @@ o.spec("CalendarEventViewModel", function () {
 		o(viewModel.canModifyGuests()).equals(true)("canModifyGuests")
 		o(viewModel.canModifyOwnAttendance()).equals(true)
 		o(viewModel.canModifyOrganizer()).equals(true)
+	})
+
+	o("init all day event", function () {
+		const existingEvent = createCalendarEvent({
+			summary: "existing event",
+			startTime: getAllDayDateUTCFromZone(new Date(2020, 4, 26), zone),
+			endTime: getAllDayDateUTCFromZone(new Date(2020, 4, 27), zone),
+			description: "note",
+			location: "location",
+			_ownerGroup: calendarGroupId,
+		})
+		const viewModel = init({calendars: makeCalendars("own"), existingEvent})
+
+		o(viewModel.summary()).equals(existingEvent.summary)
+		o(viewModel.startDate.toISOString()).equals(DateTime.fromObject({year: 2020, month: 5, day: 26, zone}).toJSDate().toISOString())
+		o(viewModel.endDate.toISOString()).equals(DateTime.fromObject({year: 2020, month: 5, day: 26, zone}).toJSDate().toISOString())
 	})
 
 	o("invite in our own calendar", function () {
@@ -425,6 +443,20 @@ o.spec("CalendarEventViewModel", function () {
 			o(sentSender.address).equals(mailAddress)
 			o(sentStatus).equals(CalendarAttendeeStatus.ACCEPTED)
 		})
+
+		o.only("existing event times preserved", async function () {
+			const calendars = makeCalendars("own")
+			const calendarModel = makeCalendarModel()
+			const startTime = DateTime.fromObject({year: 2020, month: 6, day: 4, hour: 12, zone}).toJSDate()
+			const endTime = DateTime.fromObject({year: 2020, month: 6, day: 4, hour: 13, zone}).toJSDate()
+			const existingEvent = createCalendarEvent({startTime, endTime})
+			const viewModel = init({calendars, existingEvent, calendarModel})
+			const result = await viewModel.onOkPressed()
+			o(result).deepEquals({status: "ok", askForUpdates: null})
+			const [createdEvent] = calendarModel.createEvent.calls[0].args
+			o(createdEvent.startTime.toISOString()).deepEquals(startTime.toISOString())
+			o(createdEvent.endTime.toISOString()).deepEquals(endTime.toISOString())
+		})
 	})
 })
 
@@ -442,6 +474,7 @@ function init({userController, distributor, mailboxDetail, calendars, existingEv
 		calendarModel || makeCalendarModel(),
 		mailboxDetail || makeMailboxDetail(),
 		now,
+		zone,
 		calendars,
 		existingEvent
 	)

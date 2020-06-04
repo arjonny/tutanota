@@ -99,9 +99,22 @@ export function showCalendarEventDialog(date: Date, calendars: Map<Id, CalendarI
 			.setEnabled(!viewModel.readOnly)
 
 		const okAction = (dialog) => {
-			if (viewModel.onOkPressed()) {
-				dialog.close()
-			}
+			viewModel.onOkPressed().then((result) => {
+				if (result.status === "ok") {
+					const {askForUpdates} = result
+					if (askForUpdates) {
+						// TODO: translate
+						// TODO: it should probably be more clear with options
+						Dialog.confirm(() => "Send out updates?")
+						      .then(askForUpdates)
+						      .then(() => dialog.close())
+					} else {
+						dialog.close()
+					}
+				} else {
+					Dialog.error(result.error)
+				}
+			})
 		}
 
 		const attendeesField = makeAttendeesField((bubble) => {

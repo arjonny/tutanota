@@ -16,6 +16,7 @@ import {Notifications} from "../../gui/Notifications"
 import {logins} from "./LoginController"
 import type {CalendarModel} from "../../calendar/CalendarModel"
 import {asyncImport} from "../common/utils/Utils"
+import {getTimeZone} from "../../calendar/CalendarUtils"
 
 assertMainOrNode()
 
@@ -64,6 +65,7 @@ export const locator: MainLocatorType = ({
 					calendarModel,
 					mailboxDetail,
 					date,
+					getTimeZone(),
 					calendars,
 					existingEvent,
 				)
