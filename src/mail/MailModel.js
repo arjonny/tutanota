@@ -1,7 +1,7 @@
 //@flow
 import m from "mithril"
 import stream from "mithril/stream/stream.js"
-import {containsEventOfType, getEnabledMailAddressesForGroupInfo, neverNull, noOp} from "../api/common/utils/Utils"
+import {containsEventOfType, neverNull, noOp} from "../api/common/utils/Utils"
 import {createMoveMailData} from "../api/entities/tutanota/MoveMailData"
 import {load, loadAll, serviceRequestVoid} from "../api/main/Entity"
 import {TutanotaService} from "../api/entities/tutanota/Services"
@@ -9,7 +9,6 @@ import {elementIdPart, getListId, HttpMethod, isSameId, listIdPart} from "../api
 import {LockedError, PreconditionFailedError} from "../api/common/error/RestError"
 import {Dialog} from "../gui/base/Dialog"
 import {logins} from "../api/main/LoginController"
-import {getTrashFolder, isFinalDelete} from "./MailUtils"
 import {createDeleteMailData} from "../api/entities/tutanota/DeleteMailData"
 import type {MailBox} from "../api/entities/tutanota/MailBox"
 import {MailBoxTypeRef} from "../api/entities/tutanota/MailBox"
@@ -32,9 +31,8 @@ import {Notifications} from "../gui/Notifications"
 import {ProgrammingError} from "../api/common/error/ProgrammingError"
 import {findAndApplyMatchingRule} from "./InboxRuleHandler"
 import {getFromMap} from "../api/common/utils/MapUtils"
-import {worker} from "../api/main/WorkerClient"
 import type {WebsocketCounterData} from "../api/entities/sys/WebsocketCounterData"
-import {contains} from "../api/common/utils/ArrayUtils"
+import {worker} from "../api/main/WorkerClient"
 
 export type MailboxDetail = {
 	mailbox: MailBox,
@@ -198,7 +196,7 @@ export class MailModel {
 			const folder = this.getMailFolder(mail._id[0])
 			if (!folder) {
 				throw new ProgrammingError("tried to delete mail without folder")
-			} else if (isFinalDelete(folder)) {
+			} else if (this.isFinalDelete(folder)) {
 				buckets.trash.push(mail)
 			} else {
 				getFromMap(buckets.move, folder._id, () => []).push(mail)
@@ -217,7 +215,7 @@ export class MailModel {
 		}
 		if (mailBuckets.move.size > 0) {
 			for (const [folderId, mails] of mailBuckets.move) {
-				promises.push(this.getMailboxFolders(mails[0]).then(folders => this.moveMails(mails, getTrashFolder(folders))))
+				promises.push(this.getMailboxFolders(mails[0]).then(folders => this.moveMails(mails, this.getTrashFolder(folders))))
 			}
 		}
 		return Promise.all(promises).return()
@@ -286,6 +284,14 @@ export class MailModel {
 
 	checkMailForPhishing(mail: Mail, links: Array<string>): Promise<boolean> {
 		return worker.checkMailForPhishing(mail, links, this._eventController.phishingMarkers())
+	}
+
+	getTrashFolder(folders: MailFolder[]): MailFolder {
+		return (folders.find(f => f.folderType === MailFolderType.TRASH): any)
+	}
+
+	isFinalDelete(folder: ?MailFolder): boolean {
+		return folder != null && (folder.folderType === MailFolderType.TRASH || folder.folderType === MailFolderType.SPAM)
 	}
 }
 

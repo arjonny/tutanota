@@ -3,19 +3,19 @@ import type {WorkerClient} from "./WorkerClient"
 import {EventController} from "./EventController"
 import {EntropyCollector} from "./EntropyCollector"
 import {SearchModel} from "../../search/SearchModel"
-import {assertMainOrNode} from "../Env"
-import {logins} from "./LoginController"
 import type {CalendarUpdateDistributor} from "../../calendar/CalendarUpdateDistributor"
 import type {MailboxDetail} from "../../mail/MailModel"
 import {MailModel} from "../../mail/MailModel"
-import {asyncImport} from "../common/utils/Utils"
 import type {CalendarInfo} from "../../calendar/CalendarView"
 import type {CalendarEvent} from "../entities/tutanota/CalendarEvent"
-import {Notifications} from "../../gui/Notifications"
 import type {CalendarEventViewModel} from "../../calendar/CalendarEventViewModel"
 import type {API} from "./Entity"
 import {ClientsideAPI} from "./Entity"
+import {assertMainOrNode} from "../Env"
+import {Notifications} from "../../gui/Notifications"
+import {logins} from "./LoginController"
 import type {CalendarModel} from "../../calendar/CalendarModel"
+import {asyncImport} from "../common/utils/Utils"
 
 assertMainOrNode()
 
@@ -33,43 +33,44 @@ export type MainLocatorType = {
 	) => Promise<CalendarEventViewModel>;
 	mailModel: MailModel;
 	api: API;
+
+	init: (WorkerClient) => void;
 }
 
-export const locator: MainLocatorType = ({}: any)
+export const locator: MainLocatorType = ({
+	init(worker: WorkerClient) {
+		const importBase = typeof module !== "undefined" ? module.id : __moduleName
+		this.eventController = new EventController(logins)
+		this.entropyCollector = new EntropyCollector(worker)
+		this.search = new SearchModel()
+		this.mailModel = new MailModel(new Notifications(), this.eventController)
+		this.api = new ClientsideAPI()
+
+		this.calendarUpdateDistributor = () =>
+			asyncImport(importBase, `${env.rootPathPrefix}src/calendar/CalendarUpdateDistributor.js`)
+				.then(({CalendarMailDistributor}) => new CalendarMailDistributor(this.mailModel))
+
+		this.calendarEventViewModel = (date, calendars, mailboxDetail, existingEvent) =>
+			Promise.all([
+				this.calendarUpdateDistributor(),
+				(asyncImport(importBase, `${env.rootPathPrefix}src/calendar/CalendarEventViewModel.js`):
+					Promise<{CalendarEventViewModel: Class<CalendarEventViewModel>}>),
+				(asyncImport(importBase, `${env.rootPathPrefix}src/calendar/CalendarModel.js`):
+					Promise<{calendarModel: CalendarModel}>),
+			]).then(([distributor, {CalendarEventViewModel}, {calendarModel}]) =>
+				new CalendarEventViewModel(
+					logins.getUserController(),
+					distributor,
+					calendarModel,
+					mailboxDetail,
+					date,
+					calendars,
+					existingEvent,
+				)
+			)
+	}
+}: any)
 
 if (typeof window !== "undefined") {
 	window.tutao.locator = locator
-}
-
-export function initLocator(worker: WorkerClient) {
-	const importBase = typeof module !== "undefined" ? module.id : __moduleName
-	locator.eventController = new EventController(logins)
-	locator.entropyCollector = new EntropyCollector(worker)
-	locator.search = new SearchModel()
-	locator.mailModel = new MailModel(new Notifications(), locator.eventController)
-	locator.api = new ClientsideAPI()
-
-	locator.calendarUpdateDistributor = () =>
-		asyncImport(importBase, `${env.rootPathPrefix}src/calendar/CalendarUpdateDistributor.js`)
-			.then(({CalendarMailDistributor}) => new CalendarMailDistributor(locator.mailModel))
-
-	locator.calendarEventViewModel = (date, calendars, mailboxDetail, existingEvent) =>
-		Promise.all([
-			locator.calendarUpdateDistributor(),
-			(asyncImport(importBase, `${env.rootPathPrefix}src/calendar/CalendarEventViewModel.js`):
-				Promise<{CalendarEventViewModel: Class<CalendarEventViewModel>}>),
-			(asyncImport(importBase, `${env.rootPathPrefix}src/calendar/CalendarModel.js`):
-				Promise<{calendarModel: CalendarModel}>),
-		]).then(([distributor, {CalendarEventViewModel}, {calendarModel}]) =>
-			new CalendarEventViewModel(
-				logins.getUserController(),
-				distributor,
-				calendarModel,
-				mailboxDetail,
-				date,
-				calendars,
-				existingEvent,
-			)
-		)
-
 }

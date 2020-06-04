@@ -11,7 +11,8 @@ import {nativeApp} from "../../native/NativeWrapper"
 import {logins} from "./LoginController"
 import type {
 	AccountTypeEnum,
-	BookingItemFeatureTypeEnum, CalendarMethodEnum,
+	BookingItemFeatureTypeEnum,
+	CalendarMethodEnum,
 	CloseEventBusOptionEnum,
 	ConversationTypeEnum,
 	EntropySrcEnum,
@@ -19,7 +20,7 @@ import type {
 	SpamRuleFieldTypeEnum,
 	SpamRuleTypeEnum
 } from "../common/TutanotaConstants"
-import {initLocator, locator} from "./MainLocator"
+import {locator} from "./MainLocator"
 import {client} from "../../misc/ClientDetector"
 import {downcast, identity} from "../common/utils/Utils"
 import stream from "mithril/stream/stream.js"
@@ -72,7 +73,7 @@ export class WorkerClient {
 
 	constructor() {
 		this.infoMessages = stream()
-		initLocator(this)
+		locator.init(this)
 		this._initWorker()
 		this.initialized.then(() => {
 			this._initServices()

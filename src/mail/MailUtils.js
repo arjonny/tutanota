@@ -7,14 +7,12 @@ import {createContact} from "../api/entities/tutanota/Contact"
 import {createContactMailAddress} from "../api/entities/tutanota/ContactMailAddress"
 import type {MailFolderTypeEnum} from "../api/common/TutanotaConstants"
 import {
-	ALLOWED_IMAGE_FORMATS,
 	ContactAddressType,
 	EmailSignatureType as TutanotaConstants,
 	getMailFolderType,
 	GroupType,
 	MailFolderType,
-	MailState,
-	MAX_BASE64_IMAGE_SIZE
+	MailState
 } from "../api/common/TutanotaConstants"
 import {getEnabledMailAddressesForGroupInfo, getGroupInfoDisplayName, neverNull} from "../api/common/utils/Utils"
 import {assertMainOrNode, isApp, isDesktop} from "../api/Env"
@@ -36,15 +34,13 @@ import {getContactDisplayName, searchForContactByMailAddress} from "../contacts/
 import {Dialog} from "../gui/base/Dialog"
 import type {AllIconsEnum, lazyIcon} from "../gui/base/Icon"
 import {endsWith} from "../api/common/utils/StringUtils"
-import {fileController} from "../file/FileController"
-import {uint8ArrayToBase64} from "../api/common/utils/Encoding"
-import type {InlineImages} from "./MailViewer"
-import type {Mail} from "../api/entities/tutanota/Mail"
 import type {MailFolder} from "../api/entities/tutanota/MailFolder"
 import type {File as TutanotaFile} from "../api/entities/tutanota/File"
 import type {GroupInfo} from "../api/entities/sys/GroupInfo"
 import {locator} from "../api/main/MainLocator"
 import type {IUserController} from "../api/main/UserController"
+import type {InlineImages} from "./MailViewer"
+import type {Mail} from "../api/entities/tutanota/Mail"
 
 assertMainOrNode()
 
@@ -326,11 +322,6 @@ export function getFolderIcon(folder: MailFolder): lazyIcon {
 }
 
 
-export function getTrashFolder(folders: MailFolder[]): MailFolder {
-	return (folders.find(f => f.folderType === MailFolderType.TRASH): any)
-}
-
-
 export function getInboxFolder(folders: MailFolder[]): MailFolder {
 	return getFolder(folders, MailFolderType.INBOX)
 }
@@ -393,13 +384,9 @@ export function getDefaultSender(mailboxDetails: MailboxDetail): string {
 	}
 }
 
-export function isFinalDelete(folder: ?MailFolder): boolean {
-	return folder != null && (folder.folderType === MailFolderType.TRASH || folder.folderType === MailFolderType.SPAM)
-}
-
 export function showDeleteConfirmationDialog(mails: Mail[]): Promise<boolean> {
 	let groupedMails = mails.reduce((all, mail) => {
-		isFinalDelete(locator.mailModel.getMailFolder(mail._id[0])) ? all.trash.push(mail) : all.move.push(mail)
+		locator.mailModel.isFinalDelete(locator.mailModel.getMailFolder(mail._id[0])) ? all.trash.push(mail) : all.move.push(mail)
 		return all
 	}, {trash: [], move: []})
 
@@ -463,25 +450,6 @@ export function getMailFolderIcon(mail: Mail): AllIconsEnum {
 export interface ImageHandler {
 	insertImage(srcAttr: string, attrs?: {[string]: string}): HTMLElement
 }
-
-export function insertInlineImageB64ClickHandler(ev: Event, handler: ImageHandler) {
-	fileController.showFileChooser(true, ALLOWED_IMAGE_FORMATS).then((files) => {
-		const tooBig = []
-		for (let file of files) {
-			if (file.size > MAX_BASE64_IMAGE_SIZE) {
-				tooBig.push(file)
-			} else {
-				const b64 = uint8ArrayToBase64(file.data)
-				const dataUrlString = `data:${file.mimeType};base64,${b64}`
-				handler.insertImage(dataUrlString, {style: "max-width: 100%"})
-			}
-		}
-		if (tooBig.length > 0) {
-			Dialog.error(() => lang.get("tooBigInlineImages_msg", {"{size}": MAX_BASE64_IMAGE_SIZE / 1024}))
-		}
-	})
-}
-
 
 export function replaceCidsWithInlineImages(dom: HTMLElement, inlineImages: InlineImages,
                                             onContext: (TutanotaFile, Event, HTMLElement) => mixed): Array<HTMLElement> {

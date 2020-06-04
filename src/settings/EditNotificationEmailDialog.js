@@ -16,10 +16,10 @@ import {getWhitelabelDomain, neverNull} from "../api/common/utils/Utils"
 import {logins} from "../api/main/LoginController"
 import type {CustomerInfo} from "../api/entities/sys/CustomerInfo"
 import {CustomerInfoTypeRef} from "../api/entities/sys/CustomerInfo"
-import {insertInlineImageB64ClickHandler} from "../mail/MailUtils"
 import {PreconditionFailedError} from "../api/common/error/RestError"
 import {SegmentControl} from "../gui/base/SegmentControl"
 import type {CustomerProperties} from "../api/entities/sys/CustomerProperties"
+import {insertInlineImageB64ClickHandler} from "../mail/MailViewerUtils"
 
 export function show(existingTemplate: ?NotificationMailTemplate, customerProperties: LazyLoaded<CustomerProperties>) {
 	let template: NotificationMailTemplate
