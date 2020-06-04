@@ -1,7 +1,14 @@
 //@flow
 import type {CalendarInfo} from "./CalendarView"
 import type {AlarmIntervalEnum, CalendarAttendeeStatusEnum, EndTypeEnum, RepeatPeriodEnum} from "../api/common/TutanotaConstants"
-import {CalendarAttendeeStatus, EndType, RepeatPeriod, ShareCapability, TimeFormat} from "../api/common/TutanotaConstants"
+import {
+	CalendarAttendeeStatus,
+	EndType,
+	getAttendeeStatus,
+	RepeatPeriod,
+	ShareCapability,
+	TimeFormat
+} from "../api/common/TutanotaConstants"
 import type {CalendarEventAttendee} from "../api/entities/tutanota/CalendarEventAttendee"
 import {createCalendarEventAttendee} from "../api/entities/tutanota/CalendarEventAttendee"
 import type {CalendarEvent} from "../api/entities/tutanota/CalendarEvent"
@@ -44,6 +51,7 @@ import {incrementDate} from "../api/common/utils/DateUtils"
 import type {CalendarUpdateDistributor} from "./CalendarUpdateDistributor"
 import type {IUserController} from "../api/main/UserController"
 import type {TranslationKeyType} from "../misc/TranslationKey"
+import {createMailAddress} from "../api/entities/tutanota/MailAddress"
 
 const TIMESTAMP_ZERO_YEAR = 1970
 
@@ -78,6 +86,7 @@ export class CalendarEventViewModel {
 	+_isInSharedCalendar: boolean;
 	+_distributor: CalendarUpdateDistributor;
 	+_calendarModel: CalendarModel;
+	+_ownAttendee: ?CalendarEventAttendee;
 
 	constructor(
 		userController: IUserController,
@@ -103,7 +112,8 @@ export class CalendarEventViewModel {
 		this.existingEvent = existingEvent
 		this._zone = getTimeZone()
 		this.alarms = []
-		this.going = CalendarAttendeeStatus.NEEDS_ACTION; // TODO
+		this._ownAttendee = this.attendees.find(a => this.possibleOrganizers.includes(a.address.address))
+		this.going = this._ownAttendee ? getAttendeeStatus(this._ownAttendee) : CalendarAttendeeStatus.NEEDS_ACTION
 		this._user = userController.user
 
 		/**
@@ -335,6 +345,7 @@ export class CalendarEventViewModel {
 	}
 
 	canModifyOwnAttendance(): boolean {
+		// TODO: check if we are invited
 		return !this._isInSharedCalendar
 	}
 
@@ -374,6 +385,7 @@ export class CalendarEventViewModel {
 			startDate = getAllDayDateUTCFromZone(startDate, this._zone)
 			endDate = getAllDayDateUTCFromZone(getStartOfNextDayWithZone(endDate, this._zone), this._zone)
 		} else {
+			endDate = incrementDate(endDate, 1)
 			const parsedStartTime = parseTime(this.startTime)
 			const parsedEndTime = parseTime(this.endTime)
 			if (!parsedStartTime || !parsedEndTime) {
@@ -426,7 +438,8 @@ export class CalendarEventViewModel {
 					// dependent and one is not then we have interesting bugs in edge cases (event created in -11 could
 					// end on another date in +12). So for all day events end date is UTC-encoded all day event and for
 					// regular events it is just a timestamp.
-					repeatRule.endValue = String((this.allDay() ? getAllDayDateUTCFromZone(repeatEndDate, this._zone) : repeatEndDate).getTime())
+					repeatRule.endValue =
+						String((this.allDay() ? getAllDayDateUTCFromZone(repeatEndDate, this._zone) : repeatEndDate).getTime())
 				}
 			}
 		}
@@ -435,8 +448,11 @@ export class CalendarEventViewModel {
 		if (this.existingEvent) {
 			newEvent.sequence = String(filterInt(this.existingEvent.sequence) + 1)
 		}
+
+		// We need to compute diff of attendees to know if we need to send out updates
 		let newAttendees: Array<CalendarEventAttendee> = []
 		let existingAttendees: Array<CalendarEventAttendee> = []
+		let removedAttendees: Array<CalendarEventAttendee>
 		const {existingEvent} = this
 
 		newEvent.organizer = this.organizer
@@ -450,20 +466,22 @@ export class CalendarEventViewModel {
 						newAttendees.push(a)
 					}
 				})
+				removedAttendees = existingEvent.attendees.filter((ea) =>
+					!this.attendees.find((a) => ea.address.address === a.address.address))
 			} else {
 				newAttendees = this.attendees
+				removedAttendees = []
 			}
 		} else {
-			// if (ownAttendee && participationStatus() !== CalendarAttendeeStatus.NEEDS_ACTION
-			// 	&& ownAttendee.status !== participationStatus()) {
-			// 	ownAttendee.status = participationStatus()
-			//
-			// 	newEvent.attendees = attendees
-			// 	sendCalendarInviteResponse(newEvent, createMailAddress({
-			// 		name: ownAttendee.address.name,
-			// 		address: ownAttendee.address.address,
-			// 	}), participationStatus())
-			// }
+			removedAttendees = []
+			const ownAttendee = this._ownAttendee
+			if (ownAttendee && this.going !== CalendarAttendeeStatus.NEEDS_ACTION && ownAttendee.status !== this.going) {
+				ownAttendee.status = this.going
+				this._distributor.sendResponse(newEvent, createMailAddress({
+					name: ownAttendee.address.name,
+					address: ownAttendee.address.address,
+				}), this.going)
+			}
 		}
 
 		const doCreateEvent = () => {
@@ -489,23 +507,30 @@ export class CalendarEventViewModel {
 			}
 		}
 
-		if (existingAttendees.length) {
+		if (existingAttendees.length || removedAttendees.length) {
 			// ask for update
 			return Promise.resolve({
 				status: "ok",
 				askForUpdates: (sendOutUpdate) => {
-					const awaitUpdate = sendOutUpdate && existingAttendees.length
-						? this._distributor.sendUpdate(newEvent, existingAttendees.map(a => a.address))
-						: Promise.resolve()
-					return awaitUpdate.then(doCreateEvent)
+					return doCreateEvent()
+						.then(() => sendOutUpdate && existingAttendees.length
+							? this._distributor.sendUpdate(newEvent, existingAttendees.map(a => a.address))
+							: Promise.resolve())
+						.then(() => sendOutUpdate && newAttendees.length
+							? this._distributor.sendInvite(newEvent, newAttendees.map(a => a.address))
+							: Promise.resolve())
+						.then(() => {
+							sendOutUpdate && removedAttendees.length
+								? this._distributor.sendCancellation(newEvent, removedAttendees.map(a => a.address))
+								: Promise.resolve()
+						})
 				}
 			})
 		} else {
 			// just create the event
 			return doCreateEvent().then(() => {
-				// TODO: alarms
 				if (newAttendees.length) {
-					return this._distributor.sendInvite(newEvent, [], newAttendees.map(a => a.address))
+					return this._distributor.sendInvite(newEvent, newAttendees.map(a => a.address))
 				}
 			}).then(() => {
 				return {
@@ -514,49 +539,6 @@ export class CalendarEventViewModel {
 				}
 			})
 		}
-		// askedUpdate
-		// 	.then((shouldSendOutUpdates) => {
-		// 		let updatePromise
-		// 		const safeExistingEvent = this.existingEvent
-		// 		if (safeExistingEvent == null
-		// 			|| safeExistingEvent._ownerGroup !== newEvent._ownerGroup // event has been moved to another calendar
-		// 			|| newEvent.startTime.getTime() !== safeExistingEvent.startTime.getTime()
-		// 			|| !repeatRulesEqual(newEvent.repeatRule, safeExistingEvent.repeatRule)) {
-		// 			// if values of the existing events have changed that influence the alarm time then delete the old event and create a new one.
-		// 			assignEventId(newEvent, this._zone, groupRoot)
-		// 			// Reset ownerEncSessionKey because it cannot be set for new entity, it will be assigned by the CryptoFacade
-		// 			newEvent._ownerEncSessionKey = null
-		// 			// Reset permissions because server will assign them
-		// 			downcast(newEvent)._permissions = null
-		//
-		// 			// We don't want to pass event from ics file to the facade because it's just a template event and there's nothing to
-		// 			// clean up.
-		// 			const oldEventToPass = safeExistingEvent && safeExistingEvent._ownerGroup ? safeExistingEvent : null
-		// 			updatePromise = this._calendarModel.createEvent(newEvent, newAlarms, oldEventToPass)
-		// 		} else {
-		// 			updatePromise = this._calendarModel.updateEvent(newEvent, newAlarms, safeExistingEvent)
-		// 		}
-		//
-		// 		// TODO: send out invites
-		// 		// updatePromise
-		// 		// 	// Let the dialog close first to avoid glitches
-		// 		// 	.delay(200)
-		// 		// 	.then(() => {
-		// 		// 		if (newAttendees.length) {
-		// 		// 			sendCalendarInvite(newEvent, newAlarms, newAttendees.map(a => a.address))
-		// 		// 		}
-		// 		// 		if (shouldSendOutUpdates) {
-		// 		// 			sendCalendarUpdate(newEvent, existingAttendees.map(a => a.address))
-		// 		// 		}
-		// 		// 		if (safeExistingEvent) {
-		// 		// 			const removedAttendees = safeExistingEvent.attendees.filter(att => !this.attendees.includes(att))
-		// 		// 			if (removedAttendees.length > 0) {
-		// 		// 				sendCalendarCancellation(safeExistingEvent, removedAttendees.map(a => a.address))
-		// 		// 			}
-		// 		// 		}
-		// 		// 	})
-		// 	})
-		// return true
 	}
 
 	selectGoing(going: CalendarAttendeeStatusEnum) {

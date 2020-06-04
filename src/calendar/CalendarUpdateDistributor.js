@@ -1,5 +1,4 @@
 //@flow
-
 import {MailEditor} from "../mail/MailEditor"
 import {lang} from "../misc/LanguageViewModel"
 import {makeInvitationCalendarFile} from "./CalendarImporter"
@@ -7,7 +6,6 @@ import type {CalendarAttendeeStatusEnum, CalendarMethodEnum} from "../api/common
 import {CalendarMethod, getAttendeeStatus} from "../api/common/TutanotaConstants"
 import {calendarAttendeeStatusSymbol, formatEventDuration, getTimeZone} from "./CalendarUtils"
 import type {CalendarEvent} from "../api/entities/tutanota/CalendarEvent"
-import type {AlarmInfo} from "../api/entities/sys/AlarmInfo"
 import type {EncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
 import {MailModel} from "../mail/MailModel"
 import type {MailAddress} from "../api/entities/tutanota/MailAddress"
@@ -16,7 +14,7 @@ import {stringToUtf8Uint8Array, uint8ArrayToBase64} from "../api/common/utils/En
 import {theme} from "../gui/theme"
 
 export interface CalendarUpdateDistributor {
-	sendInvite(existingEvent: CalendarEvent, alarms: Array<AlarmInfo>, recipients: $ReadOnlyArray<EncryptedMailAddress>): Promise<void>;
+	sendInvite(existingEvent: CalendarEvent, recipients: $ReadOnlyArray<EncryptedMailAddress>): Promise<void>;
 
 	sendUpdate(event: CalendarEvent, recipients: $ReadOnlyArray<EncryptedMailAddress>): Promise<void>;
 
@@ -32,7 +30,7 @@ export class CalendarMailDistributor implements CalendarUpdateDistributor {
 		this._mailModel = mailModel
 	}
 
-	sendInvite(existingEvent: CalendarEvent, alarms: Array<AlarmInfo>, recipients: $ReadOnlyArray<EncryptedMailAddress>): Promise<void> {
+	sendInvite(existingEvent: CalendarEvent, recipients: $ReadOnlyArray<EncryptedMailAddress>): Promise<void> {
 		return this._mailModel.getUserMailboxDetails().then((mailboxDetails) => {
 			if (existingEvent.organizer == null) {
 				throw new Error("Cannot send invite if organizer is not sent")

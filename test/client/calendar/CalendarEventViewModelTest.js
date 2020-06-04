@@ -1,14 +1,15 @@
 //@flow
 import o from "ospec/ospec.js"
+import type {EventCreateResult} from "../../../src/calendar/CalendarEventViewModel"
 import {CalendarEventViewModel} from "../../../src/calendar/CalendarEventViewModel"
-import {downcast, neverNull} from "../../../src/api/common/utils/Utils"
+import {downcast} from "../../../src/api/common/utils/Utils"
 import {LazyLoaded} from "../../../src/api/common/utils/LazyLoaded"
 import type {MailboxDetail} from "../../../src/mail/MailModel"
 import type {CalendarEvent} from "../../../src/api/entities/tutanota/CalendarEvent"
 import {createCalendarEvent} from "../../../src/api/entities/tutanota/CalendarEvent"
 import {createGroupInfo} from "../../../src/api/entities/sys/GroupInfo"
 import type {ShareCapabilityEnum} from "../../../src/api/common/TutanotaConstants"
-import {GroupType, ShareCapability, TimeFormat} from "../../../src/api/common/TutanotaConstants"
+import {CalendarAttendeeStatus, GroupType, ShareCapability, TimeFormat} from "../../../src/api/common/TutanotaConstants"
 import type {CalendarInfo} from "../../../src/calendar/CalendarView"
 import {createGroupMembership} from "../../../src/api/entities/sys/GroupMembership"
 import type {User} from "../../../src/api/entities/sys/User"
@@ -79,12 +80,19 @@ o.spec("CalendarEventViewModel", function () {
 			organizer: "another-user@provider.com",
 			_ownerGroup: null,
 			isCopy: true,
+			attendees: [
+				createCalendarEventAttendee({
+					address: createEncryptedMailAddress({address: mailAddress}),
+					status: CalendarAttendeeStatus.ACCEPTED,
+				})
+			]
 		})
 		const viewModel = init({calendars, existingEvent})
 		o(viewModel.readOnly).equals(false)
 		o(viewModel.canModifyGuests()).equals(false)
 		o(viewModel.canModifyOwnAttendance()).equals(true)
 		o(viewModel.canModifyOrganizer()).equals(false)
+		o(viewModel.going).equals(CalendarAttendeeStatus.ACCEPTED)
 	})
 
 	o("in writable calendar", function () {
@@ -244,6 +252,7 @@ o.spec("CalendarEventViewModel", function () {
 			const [createdEvent] = calendarModel.createEvent.calls[0].args
 			o(createdEvent.summary).equals("Summary")
 			o(distributor.sendInvite.calls).deepEquals([])
+			o(distributor.sendCancellation.calls).deepEquals([])
 		})
 
 		o("own calendar, new guests", async function () {
@@ -256,10 +265,11 @@ o.spec("CalendarEventViewModel", function () {
 
 			o(await viewModel.onOkPressed()).deepEquals({status: "ok", askForUpdates: null})
 			o(calendarModel.createEvent.calls.length).equals(1)("created event")
-			o(distributor.sendInvite.calls[0].args[2]).deepEquals([createEncryptedMailAddress({address: newGuest})])
+			o(distributor.sendInvite.calls[0].args[1]).deepEquals([createEncryptedMailAddress({address: newGuest})])
+			o(distributor.sendCancellation.calls).deepEquals([])
 		})
 
-		o.only("own calendar, same guests, agree on updates", async function () {
+		o("own calendar, same guests, agree on updates", async function () {
 			const calendars = makeCalendars("own")
 			const calendarModel = makeCalendarModel()
 			const distributor = makeDistributor()
@@ -276,17 +286,144 @@ o.spec("CalendarEventViewModel", function () {
 			viewModel.onStartDateSelected(new Date(2020, 4, 3))
 
 			const result = await viewModel.onOkPressed()
-			if (result.status !== "ok") {
-				throw new Error("Result is not ok")
-			}
-			if (result.askForUpdates == null) {
-				throw new Error("Did not ask for updates")
-			}
+			const askForUpdates = assertAskedForUpdates(result)
 			o(distributor.sendUpdate.calls).deepEquals([])
-
-			await neverNull(result.askForUpdates)(true)
+			await askForUpdates(true)
 			o(calendarModel.createEvent.calls.length).equals(1)("created event")
 			o(distributor.sendUpdate.calls[0].args[1]).deepEquals([createEncryptedMailAddress({address: guest})])
+			o(distributor.sendCancellation.calls).deepEquals([])
+		})
+
+		o("own calendar, old, new, removed guests, agree on updates", async function () {
+			const calendars = makeCalendars("own")
+			const calendarModel = makeCalendarModel()
+			const distributor = makeDistributor()
+			const oldGuest = "old-attendee@example.com"
+			const newGuest = "new-attendee@example.com"
+			const toRemoveGuest = "remove-attendee@example.com"
+			const toRemoveAttendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: toRemoveGuest})
+			})
+			const existingEvent = createCalendarEvent({
+				attendees: [
+					createCalendarEventAttendee({
+						address: createEncryptedMailAddress({address: oldGuest})
+					}),
+					toRemoveAttendee
+				],
+				organizer: mailAddress,
+			})
+			const viewModel = init({calendars, existingEvent, calendarModel, distributor})
+			viewModel.onStartDateSelected(new Date(2020, 4, 3))
+			viewModel.addAttendee(newGuest)
+			viewModel.removeAttendee(toRemoveAttendee)
+
+			const result = await viewModel.onOkPressed()
+			const askForUpdates = assertAskedForUpdates(result)
+			o(distributor.sendUpdate.calls).deepEquals([])
+			await askForUpdates(true)
+
+			o(calendarModel.createEvent.calls.length).equals(1)("created event")
+			o(distributor.sendUpdate.calls[0].args[1]).deepEquals([createEncryptedMailAddress({address: oldGuest})])
+			o(distributor.sendInvite.calls[0].args[1]).deepEquals([createEncryptedMailAddress({address: newGuest})])
+			o(distributor.sendCancellation.calls[0].args[1]).deepEquals([toRemoveAttendee.address])
+		})
+
+		o("own calendar, old, new, removed guests, do not send updates", async function () {
+			const calendars = makeCalendars("own")
+			const calendarModel = makeCalendarModel()
+			const distributor = makeDistributor()
+			const oldGuest = "old-attendee@example.com"
+			const newGuest = "new-attendee@example.com"
+			const toRemoveGuest = "remove-attendee@example.com"
+			const toRemoveAttendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: toRemoveGuest})
+			})
+			const existingEvent = createCalendarEvent({
+				attendees: [
+					createCalendarEventAttendee({
+						address: createEncryptedMailAddress({address: oldGuest})
+					}),
+					toRemoveAttendee
+				],
+				organizer: mailAddress,
+			})
+			const viewModel = init({calendars, existingEvent, calendarModel, distributor})
+			viewModel.onStartDateSelected(new Date(2020, 4, 3))
+			viewModel.addAttendee(newGuest)
+			viewModel.removeAttendee(toRemoveAttendee)
+
+			const result = await viewModel.onOkPressed()
+			const askForUpdates = assertAskedForUpdates(result)
+			o(distributor.sendUpdate.calls).deepEquals([])
+			await askForUpdates(false)
+
+			o(calendarModel.createEvent.calls.length).equals(1)("created event")
+			o(distributor.sendUpdate.calls).deepEquals([])
+			o(distributor.sendInvite.calls).deepEquals([])
+			o(distributor.sendCancellation.calls).deepEquals([])
+		})
+
+		o("own calendar, only removed guests, send updates", async function () {
+			const calendars = makeCalendars("own")
+			const calendarModel = makeCalendarModel()
+			const distributor = makeDistributor()
+			const toRemoveGuest = "remove-attendee@example.com"
+			const toRemoveAttendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: toRemoveGuest})
+			})
+			const existingEvent = createCalendarEvent({
+				attendees: [
+					toRemoveAttendee
+				],
+				organizer: mailAddress,
+			})
+			const viewModel = init({calendars, existingEvent, calendarModel, distributor})
+			viewModel.onStartDateSelected(new Date(2020, 4, 3))
+			viewModel.removeAttendee(toRemoveAttendee)
+
+			const result = await viewModel.onOkPressed()
+			const askForUpdates = assertAskedForUpdates(result)
+			o(distributor.sendUpdate.calls).deepEquals([])
+			await askForUpdates(true)
+
+			o(calendarModel.createEvent.calls.length).equals(1)("created event")
+			o(distributor.sendCancellation.calls[0].args[1]).deepEquals([toRemoveAttendee.address])
+		})
+
+		o("send response", async function () {
+			const calendars = makeCalendars("own")
+			const calendarModel = makeCalendarModel()
+			const distributor = makeDistributor()
+			const ownAttendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: mailAddress}),
+				status: CalendarAttendeeStatus.NEEDS_ACTION,
+			})
+			const anotherAttendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: "another-attendee@example.com"}),
+				status: CalendarAttendeeStatus.DECLINED,
+			})
+			const existingEvent = createCalendarEvent({
+				startTime: new Date(2020, 5, 1),
+				endTime: new Date(2020, 5, 2),
+				organizer: "another-address@example.com",
+				attendees: [ownAttendee, anotherAttendee]
+			})
+			const viewModel = init({calendars, existingEvent, calendarModel, distributor})
+			viewModel.selectGoing(CalendarAttendeeStatus.ACCEPTED)
+			const result = await viewModel.onOkPressed()
+
+			o(result).deepEquals({status: "ok", askForUpdates: null})
+			const [createdEvent] = calendarModel.createEvent.calls[0].args
+			o(createdEvent.attendees.length).equals(2)
+			o(createdEvent.attendees.find(a => a.address === ownAttendee.address).status).equals(CalendarAttendeeStatus.ACCEPTED)
+			o(createdEvent.attendees.find(a => a.address === anotherAttendee.address).status).equals(CalendarAttendeeStatus.DECLINED)
+			o(distributor.sendUpdate.calls).deepEquals([])
+			o(distributor.sendInvite.calls).deepEquals([])
+			o(distributor.sendCancellation.calls).deepEquals([])
+			const [_, sentSender, sentStatus] = distributor.sendResponse.calls[0].args
+			o(sentSender.address).equals(mailAddress)
+			o(sentStatus).equals(CalendarAttendeeStatus.ACCEPTED)
 		})
 	})
 })
@@ -380,4 +517,14 @@ function makeCalendarModel(): CalendarModel {
 		updateEvent: o.spy(() => Promise.resolve()),
 		deleteEvent: o.spy(() => Promise.resolve()),
 	}
+}
+
+function assertAskedForUpdates(result: EventCreateResult): ((bool) => Promise<void>) {
+	if (result.status !== "ok") {
+		throw new Error("Result is not ok")
+	}
+	if (result.askForUpdates == null) {
+		throw new Error("Did not ask for updates")
+	}
+	return result.askForUpdates
 }
