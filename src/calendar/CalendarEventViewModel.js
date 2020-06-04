@@ -103,8 +103,8 @@ export class CalendarEventViewModel {
 		this.calendars = Array.from(calendars.values())
 		this.selectedCalendar = stream(this.calendars[0])
 		this.attendees = existingEvent && existingEvent.attendees.slice() || []
-		this.organizer = existingEvent && existingEvent.organizer || getDefaultSenderFromUser(userController)
-		this.possibleOrganizers = getEnabledMailAddressesWithUser(mailboxDetail, userController.userGroupInfo)
+		const existingOrganizer = existingEvent && existingEvent.organizer
+		this.organizer = existingOrganizer || getDefaultSenderFromUser(userController)
 		this.location = stream("")
 		this.note = stream("")
 		this.allDay = stream(true)
@@ -112,7 +112,8 @@ export class CalendarEventViewModel {
 		this.existingEvent = existingEvent
 		this._zone = zone
 		this.alarms = []
-		this._ownAttendee = this.attendees.find(a => this.possibleOrganizers.includes(a.address.address))
+		const mailAddresses = getEnabledMailAddressesWithUser(mailboxDetail, userController.userGroupInfo)
+		this._ownAttendee = this.attendees.find(a => mailAddresses.includes(a.address.address))
 		this.going = this._ownAttendee ? getAttendeeStatus(this._ownAttendee) : CalendarAttendeeStatus.NEEDS_ACTION
 		this._user = userController.user
 
@@ -155,6 +156,10 @@ export class CalendarEventViewModel {
 				this.readOnly = false
 			}
 		}
+
+		this.possibleOrganizers = existingOrganizer && !this.canModifyOrganizer()
+			? [existingOrganizer]
+			: mailAddresses
 
 		if (existingEvent) {
 			this.summary(existingEvent.summary)
@@ -308,8 +313,7 @@ export class CalendarEventViewModel {
 		if (repeat) {
 			repeat.endType = endType
 			if (endType === EndType.UntilDate) {
-				// TODO: improve
-				repeat.endValue = new Date().getTime()
+				repeat.endValue = incrementByRepeatPeriod(new Date(), RepeatPeriod.MONTHLY, 1, this._zone).getTime()
 			} else {
 				repeat.endValue = 1
 			}
@@ -345,8 +349,7 @@ export class CalendarEventViewModel {
 	}
 
 	canModifyOwnAttendance(): boolean {
-		// TODO: check if we are invited
-		return !this._isInSharedCalendar
+		return !this._isInSharedCalendar && (this._viewingOwnEvent() || !!this._ownAttendee)
 	}
 
 	canModifyOrganizer(): boolean {
@@ -507,7 +510,7 @@ export class CalendarEventViewModel {
 			}
 		}
 
-		if (existingAttendees.length || removedAttendees.length) {
+		if (this._viewingOwnEvent() && existingAttendees.length || removedAttendees.length) {
 			// ask for update
 			return Promise.resolve({
 				status: "ok",

@@ -40,6 +40,7 @@ o.spec("CalendarEventViewModel", function () {
 			description: "note",
 			location: "location",
 			_ownerGroup: calendarGroupId,
+			organizer: mailAddress,
 		})
 		const viewModel = init({calendars: makeCalendars("own"), existingEvent})
 
@@ -54,6 +55,8 @@ o.spec("CalendarEventViewModel", function () {
 		o(viewModel.canModifyGuests()).equals(true)("canModifyGuests")
 		o(viewModel.canModifyOwnAttendance()).equals(true)
 		o(viewModel.canModifyOrganizer()).equals(true)
+		o(viewModel.organizer).equals(mailAddress)
+		o(viewModel.possibleOrganizers).deepEquals([mailAddress])
 	})
 
 	o("init all day event", function () {
@@ -80,13 +83,21 @@ o.spec("CalendarEventViewModel", function () {
 			organizer: "another-user@provider.com",
 			_ownerGroup: calendarGroupId,
 			isCopy: true,
-			attendees: [createCalendarEventAttendee()]
+			attendees: [
+				createCalendarEventAttendee({
+					address: createEncryptedMailAddress({address: "attendee@example.com"})
+				}),
+				createCalendarEventAttendee({
+					address: createEncryptedMailAddress({address: mailAddress})
+				})
+			]
 		})
 		const viewModel = init({calendars: makeCalendars("own"), existingEvent})
 		o(viewModel.readOnly).equals(false)
 		o(viewModel.canModifyGuests()).equals(false)
 		o(viewModel.canModifyOwnAttendance()).equals(true)
 		o(viewModel.canModifyOrganizer()).equals(false)
+		o(viewModel.possibleOrganizers).deepEquals([existingEvent.organizer])
 	})
 
 	o("new invite (without calendar)", function () {
@@ -110,6 +121,7 @@ o.spec("CalendarEventViewModel", function () {
 		o(viewModel.canModifyGuests()).equals(false)
 		o(viewModel.canModifyOwnAttendance()).equals(true)
 		o(viewModel.canModifyOrganizer()).equals(false)
+		o(viewModel.possibleOrganizers).deepEquals([existingEvent.organizer])
 		o(viewModel.going).equals(CalendarAttendeeStatus.ACCEPTED)
 	})
 
@@ -129,6 +141,7 @@ o.spec("CalendarEventViewModel", function () {
 		o(viewModel.canModifyGuests()).equals(false)
 		o(viewModel.canModifyOwnAttendance()).equals(false)
 		o(viewModel.canModifyOrganizer()).equals(false)
+		o(viewModel.possibleOrganizers).deepEquals([existingEvent.organizer])
 	})
 
 	o("invite in writable calendar", function () {
@@ -148,6 +161,7 @@ o.spec("CalendarEventViewModel", function () {
 		o(viewModel.canModifyGuests()).equals(false)
 		o(viewModel.canModifyOwnAttendance()).equals(false)
 		o(viewModel.canModifyOrganizer()).equals(false)
+		o(viewModel.possibleOrganizers).deepEquals([existingEvent.organizer])
 	})
 
 	o("in readonly calendar", function () {
@@ -175,13 +189,18 @@ o.spec("CalendarEventViewModel", function () {
 			endTime: new Date(2020, 4, 26, 13),
 			organizer: "another-user@provider.com",
 			_ownerGroup: calendarGroupId,
-			attendees: [createCalendarEventAttendee()]
+			attendees: [
+				createCalendarEventAttendee({
+					address: createEncryptedMailAddress({address: "attendee@example.com"})
+				})
+			]
 		})
 		const viewModel = init({calendars, userController, existingEvent})
 		o(viewModel.readOnly).equals(true)
 		o(viewModel.canModifyGuests()).equals(false)
 		o(viewModel.canModifyOwnAttendance()).equals(false)
 		o(viewModel.canModifyOrganizer()).equals(false)
+		o(viewModel.possibleOrganizers).deepEquals([existingEvent.organizer])
 	})
 
 	o.spec("delete event", function () {
@@ -425,7 +444,8 @@ o.spec("CalendarEventViewModel", function () {
 				startTime: new Date(2020, 5, 1),
 				endTime: new Date(2020, 5, 2),
 				organizer: "another-address@example.com",
-				attendees: [ownAttendee, anotherAttendee]
+				attendees: [ownAttendee, anotherAttendee],
+				isCopy: true,
 			})
 			const viewModel = init({calendars, existingEvent, calendarModel, distributor})
 			viewModel.selectGoing(CalendarAttendeeStatus.ACCEPTED)
@@ -444,7 +464,7 @@ o.spec("CalendarEventViewModel", function () {
 			o(sentStatus).equals(CalendarAttendeeStatus.ACCEPTED)
 		})
 
-		o.only("existing event times preserved", async function () {
+		o("existing event times preserved", async function () {
 			const calendars = makeCalendars("own")
 			const calendarModel = makeCalendarModel()
 			const startTime = DateTime.fromObject({year: 2020, month: 6, day: 4, hour: 12, zone}).toJSDate()
