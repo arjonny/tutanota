@@ -46,7 +46,6 @@ export function showEventDetailsFromFile(firstCalendarFile: TutanotaFile) {
 			      locator.mailModel.getUserMailboxDetails(),
 		      ]).then(([existingEvent, calendarInfo, mailboxDetails]) => {
 			      if (existingEvent) {
-				      m.route.set(`/calendar/month/${DateTime.fromJSDate(existingEvent.startTime).toISODate()}`)
 				      // It should be the latest version eventually via CalendarEventUpdates
 				      showCalendarEventDialog(existingEvent.startTime, calendarInfo, mailboxDetails, existingEvent)
 			      } else {

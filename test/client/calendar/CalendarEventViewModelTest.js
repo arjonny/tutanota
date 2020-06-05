@@ -41,6 +41,7 @@ o.spec("CalendarEventViewModel", function () {
 			location: "location",
 			_ownerGroup: calendarGroupId,
 			organizer: mailAddress,
+			description: "descr"
 		})
 		const viewModel = init({calendars: makeCalendars("own"), existingEvent})
 
@@ -49,7 +50,7 @@ o.spec("CalendarEventViewModel", function () {
 		o(viewModel.endDate.toISOString()).equals(DateTime.fromObject({year: 2020, month: 5, day: 26}).toJSDate().toISOString())
 		o(viewModel.startTime).equals("12:00")
 		o(viewModel.endTime).equals("13:00")
-		o(viewModel.note()).equals(existingEvent.description)
+		o(viewModel.note).equals(existingEvent.description)
 		o(viewModel.location()).equals(existingEvent.location)
 		o(viewModel.readOnly).equals(false)
 		o(viewModel.canModifyGuests()).equals(true)("canModifyGuests")
@@ -283,11 +284,14 @@ o.spec("CalendarEventViewModel", function () {
 			const viewModel = init({calendars, existingEvent: null, calendarModel, distributor})
 			const summary = "Summary"
 			viewModel.summary(summary)
+			const newDescription = "new description"
+			viewModel.changeDescription(newDescription)
 
 			o(await viewModel.onOkPressed()).deepEquals({status: "ok", askForUpdates: null})
 
 			const [createdEvent] = calendarModel.createEvent.calls[0].args
 			o(createdEvent.summary).equals("Summary")
+			o(createdEvent.description).equals(newDescription)
 			o(distributor.sendInvite.calls).deepEquals([])
 			o(distributor.sendCancellation.calls).deepEquals([])
 		})

@@ -72,7 +72,7 @@ export class CalendarEventViewModel {
 	organizer: ?string;
 	+possibleOrganizers: $ReadOnlyArray<string>;
 	+location: Stream<string>;
-	+note: Stream<string>;
+	note: string;
 	+amPmFormat: bool;
 	+existingEvent: ?CalendarEvent
 	_oldStartTime: ?string;
@@ -106,7 +106,7 @@ export class CalendarEventViewModel {
 		const existingOrganizer = existingEvent && existingEvent.organizer
 		this.organizer = existingOrganizer || getDefaultSenderFromUser(userController)
 		this.location = stream("")
-		this.note = stream("")
+		this.note = ""
 		this.allDay = stream(true)
 		this.amPmFormat = userController.userSettingsGroupRoot.timeFormat === TimeFormat.TWELVE_HOURS
 		this.existingEvent = existingEvent
@@ -198,7 +198,7 @@ export class CalendarEventViewModel {
 				this.repeat = null
 			}
 			this.location(existingEvent.location)
-			this.note(existingEvent.description)
+			this.note = existingEvent.description
 
 			for (let alarmInfoId of existingEvent.alarmInfos) {
 				if (isSameId(listIdPart(alarmInfoId), neverNull(this._user.alarmInfoList).alarms)) {
@@ -340,6 +340,10 @@ export class CalendarEventViewModel {
 		}
 	}
 
+	changeDescription(description: string) {
+		this.note = description
+	}
+
 	canModifyGuests(): boolean {
 		return !this._isInSharedCalendar && (!this.existingEvent || !this.existingEvent.isCopy)
 	}
@@ -407,7 +411,7 @@ export class CalendarEventViewModel {
 			return Promise.resolve({status: "error", error: "timeFormatInvalid_msg"})
 		}
 		newEvent.startTime = startDate
-		newEvent.description = this.note()
+		newEvent.description = this.note
 		newEvent.summary = this.summary()
 		newEvent.location = this.location()
 		newEvent.endTime = endDate

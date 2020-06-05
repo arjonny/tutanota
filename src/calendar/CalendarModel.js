@@ -433,15 +433,21 @@ export class CalendarModelImpl implements CalendarModel {
 						console.log("REQUEST sent not by organizer, ignoring")
 						return
 					}
-					// TODO: check alarms
+					// TODO: check alarms, should we create a new event in some cases?
 					const newEvent = clone(dbEvent)
 					newEvent.attendees = event.attendees
 					newEvent.summary = event.summary
 					newEvent.sequence = event.sequence
+					newEvent.location = event.location
+					newEvent.description = event.description
+					newEvent.endTime = event.endTime
+					newEvent.organizer = event.organizer
+					// TODO: handle time/repeat rule changes
+					// newEvent.repeatRule = event.repeatRule
+
 					console.log("Updating event", dbEvent.uid, dbEvent._id)
 					return worker.updateCalendarEvent(newEvent, [], dbEvent)
 				}
-				// We might want to insert new invitation for the user if it's a new invite
 			})
 		} else if (calendarData.method === CalendarMethod.CANCEL) {
 			return worker.getEventByUid(uid).then((dbEvent) => {

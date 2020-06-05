@@ -93,12 +93,14 @@ export function showCalendarEventDialog(date: Date, calendars: Map<Id, CalendarI
 				type: ButtonType.Toggle,
 			})
 		)
-			.setValue(existingEvent ? existingEvent.description : "")
 			.setMinHeight(400)
 			.showBorders()
 			.setEnabled(!viewModel.readOnly)
+			// We only set it once, we don't viewModel on every change, that would be slow
+			.setValue(viewModel.note)
 
 		const okAction = (dialog) => {
+			viewModel.changeDescription(descriptionEditor.getValue())
 			viewModel.onOkPressed().then((result) => {
 				if (result.status === "ok") {
 					const {askForUpdates} = result
@@ -321,7 +323,7 @@ export function showCalendarEventDialog(date: Date, calendars: Map<Id, CalendarI
 						}),
 						m(".flex-grow"),
 						m(ExpanderButtonN, {
-							label: "guests_label",
+							label: "showMore_action",
 							expanded: attendeesExpanded,
 							style: {paddingTop: 0},
 						})
@@ -336,6 +338,7 @@ export function showCalendarEventDialog(date: Date, calendars: Map<Id, CalendarI
 						]),
 						m(".flex-grow", [
 							renderInviting(),
+							m(".mt", lang.get("guests_label")),
 							renderAttendees()
 						]),
 						),
