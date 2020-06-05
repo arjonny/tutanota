@@ -16,7 +16,7 @@ import {getFromMap} from "../api/common/utils/MapUtils"
 import type {DeferredObject} from "../api/common/utils/Utils"
 import {clone, defer, downcast, neverNull} from "../api/common/utils/Utils"
 import type {AlarmIntervalEnum, EndTypeEnum, RepeatPeriodEnum} from "../api/common/TutanotaConstants"
-import {AlarmInterval, EndType, FeatureType, GroupType, OperationType, RepeatPeriod} from "../api/common/TutanotaConstants"
+import {AlarmInterval, CalendarMethod, EndType, FeatureType, GroupType, OperationType, RepeatPeriod} from "../api/common/TutanotaConstants"
 import {DateTime, FixedOffsetZone, IANAZone} from "luxon"
 import {isAllDayEvent, isAllDayEventByTimes} from "../api/common/utils/CommonCalendarUtils"
 import {Notifications} from "../gui/Notifications"
@@ -400,7 +400,7 @@ export class CalendarModelImpl implements CalendarModel {
 		}
 		const uid = event.uid
 
-		if (calendarData.method === "REPLY") {
+		if (calendarData.method === CalendarMethod.REPLY) {
 			// Process it
 			return worker.getEventByUid(uid).then((dbEvent) => {
 				if (dbEvent == null) {
@@ -425,7 +425,7 @@ export class CalendarModelImpl implements CalendarModel {
 				// TODO: check alarmInfo
 				return worker.updateCalendarEvent(updatedEvent, [], dbEvent)
 			})
-		} else if (calendarData.method === "REQUEST") { // Either initial invite or update
+		} else if (calendarData.method === CalendarMethod.REQUEST) { // Either initial invite or update
 			return worker.getEventByUid(uid).then((dbEvent) => {
 				if (dbEvent) {
 					// then it's an update
@@ -443,7 +443,7 @@ export class CalendarModelImpl implements CalendarModel {
 				}
 				// We might want to insert new invitation for the user if it's a new invite
 			})
-		} else if (calendarData.method === "CANCEL") {
+		} else if (calendarData.method === CalendarMethod.CANCEL) {
 			return worker.getEventByUid(uid).then((dbEvent) => {
 				if (dbEvent != null) {
 					if (dbEvent.organizer !== sender) {

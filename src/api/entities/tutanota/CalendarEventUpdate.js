@@ -65,7 +65,7 @@ export const _TypeModel: TypeModel = {
 			"type": "String",
 			"cardinality": "One",
 			"final": true,
-			"encrypted": false
+			"encrypted": true
 		}
 	},
 	"associations": {
