@@ -43,6 +43,7 @@ import {showAddDomainDialog} from "./AddDomainDialog"
 import {DomainDnsStatus} from "./DomainDnsStatus"
 import {showDnsCheckDialog} from "./CheckDomainDnsStatusDialog"
 import type {DomainInfo} from "../api/entities/sys/DomainInfo"
+import type {SelectorItemList} from "../gui/base/DropDownSelectorN"
 
 assertMainOrNode()
 
@@ -443,7 +444,7 @@ export class GlobalSettingsViewer implements UpdatableSettingsViewer {
 	}
 }
 
-export function getSpamRuleTypeNameMapping(): {value: SpamRuleTypeEnum, name: string}[] {
+export function getSpamRuleTypeNameMapping(): SelectorItemList<SpamRuleTypeEnum> {
 	return [
 		{value: SpamRuleType.WHITELIST, name: lang.get("emailSenderWhitelist_action")},
 		{value: SpamRuleType.BLACKLIST, name: lang.get("emailSenderBlacklist_action")},
@@ -460,7 +461,7 @@ function getSpamRuleFieldToName(): {[SpamRuleFieldTypeEnum]: string} {
 	}
 }
 
-export function getSpamRuleFieldMapping(): Array<{value: SpamRuleFieldTypeEnum, name: string}> {
+export function getSpamRuleFieldMapping(): SelectorItemList<SpamRuleFieldTypeEnum> {
 	return objectEntries(getSpamRuleFieldToName()).map(([value, name]) => ({value, name}))
 }
 

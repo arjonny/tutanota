@@ -26,6 +26,7 @@ import {showProgressDialog} from "./ProgressDialog"
 import {Keys} from "../../api/common/TutanotaConstants"
 import {dialogAttrs} from "../../api/common/utils/AriaUtils"
 import {styles} from "../styles"
+import type {SelectorItemList} from "./DropDownSelectorN"
 
 assertMainOrNode()
 
@@ -593,7 +594,8 @@ export class Dialog {
 	 * @returns A promise resolving to the selected item. The returned promise is only resolved if "ok" is clicked.
 	 */
 	static showDropDownSelectionDialog<T>(titleId: TranslationKey, label: TranslationKey, infoMsgId: ?TranslationKey,
-	                                      items: {name: string, value: T}[], selectedValue: Stream<T>, dropdownWidth: ?number): Promise<T> {
+	                                      items: SelectorItemList<T>, selectedValue: Stream<T>, dropdownWidth: ?number
+	): Promise<T> {
 		return new Promise(resolve => {
 			Dialog.showActionDialog({
 				title: lang.get(titleId),

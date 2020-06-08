@@ -24,6 +24,7 @@ import {createEncryptedMailAddress} from "../../../src/api/entities/tutanota/Enc
 import {CalendarModel} from "../../../src/calendar/CalendarModel"
 import {getAllDayDateUTCFromZone} from "../../../src/calendar/CalendarUtils"
 import {DateTime} from "luxon"
+import {createMailAddressAlias} from "../../../src/api/entities/sys/MailAddressAlias"
 
 const calendarGroupId = "0"
 const now = new Date(2020, 4, 25, 13, 40)
@@ -490,6 +491,96 @@ o.spec("CalendarEventViewModel", function () {
 			o(createdEvent.startTime.toISOString()).deepEquals(startTime.toISOString())
 			o(createdEvent.endTime.toISOString()).deepEquals(endTime.toISOString())
 		})
+
+		o("invite to self is not sent", async function () {
+			const calendars = makeCalendars("own")
+			const calendarModel = makeCalendarModel()
+			const distributor = makeDistributor()
+			const viewModel = init({calendars, existingEvent: null, calendarModel, distributor})
+			const newGuest = "new-attendee@example.com"
+			viewModel.addAttendee(newGuest)
+			viewModel.addAttendee(mailAddress)
+
+			o(await viewModel.onOkPressed()).deepEquals({status: "ok", askForUpdates: null})
+			o(calendarModel.createEvent.calls.length).equals(1)("created event")
+			o(distributor.sendInvite.calls[0].args[1]).deepEquals([createEncryptedMailAddress({address: newGuest})])
+			o(distributor.sendCancellation.calls).deepEquals([])
+		})
+
+		o("update to self is not sent", async function () {
+			const calendars = makeCalendars("own")
+			const distributor = makeDistributor()
+			const ownAttendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: mailAddress}),
+				status: CalendarAttendeeStatus.NEEDS_ACTION,
+			})
+			const anotherAttendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: "another-attendee@example.com"}),
+				status: CalendarAttendeeStatus.DECLINED,
+			})
+			const alias = "alias@tutanota.com"
+			const userController = makeUserController([alias])
+			const existingEvent = createCalendarEvent({
+				startTime: new Date(2020, 5, 1),
+				endTime: new Date(2020, 5, 2),
+				organizer: alias,
+				attendees: [ownAttendee, anotherAttendee],
+			})
+			const viewModel = init({calendars, distributor, userController, existingEvent})
+
+			const result = await viewModel.onOkPressed()
+
+			const askForUpdates = assertAskedForUpdates(result)
+			await askForUpdates(true)
+			o(distributor.sendUpdate.calls[0].args[1]).deepEquals([anotherAttendee.address])
+		})
+
+		o("invite is not called if only self is added", async function () {
+			const calendars = makeCalendars("own")
+			const distributor = makeDistributor()
+			const anotherAttendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: "another-attendee@example.com"}),
+				status: CalendarAttendeeStatus.DECLINED,
+			})
+			const alias = "alias@tutanota.com"
+			const userController = makeUserController([alias])
+			const existingEvent = createCalendarEvent({
+				startTime: new Date(2020, 5, 1),
+				endTime: new Date(2020, 5, 2),
+				organizer: alias,
+				attendees: [anotherAttendee],
+			})
+			const viewModel = init({calendars, distributor, userController, existingEvent})
+
+			viewModel.addAttendee(mailAddress)
+			const result = await viewModel.onOkPressed()
+
+			// Update is asked because there's another attendee
+			const askForUpdates = assertAskedForUpdates(result)
+			await askForUpdates(true)
+			o(distributor.sendUpdate.calls[0].args[1]).deepEquals([anotherAttendee.address])
+			o(distributor.sendInvite.calls).deepEquals([])("Invite is not called")
+		})
+
+		o("does not ask for updates if only self is present", async function () {
+			const calendars = makeCalendars("own")
+			const distributor = makeDistributor()
+			const ownAttendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: mailAddress}),
+				status: CalendarAttendeeStatus.NEEDS_ACTION,
+			})
+			const alias = "alias@tutanota.com"
+			const userController = makeUserController([alias])
+			const existingEvent = createCalendarEvent({
+				startTime: new Date(2020, 5, 1),
+				endTime: new Date(2020, 5, 2),
+				organizer: alias,
+				attendees: [ownAttendee],
+			})
+			const viewModel = init({calendars, distributor, userController, existingEvent})
+			const result = await viewModel.onOkPressed()
+			o(result).deepEquals({status: "ok", askForUpdates: null})
+		})
 	})
 
 	o.spec("onStartDateSelected", function () {
@@ -521,6 +612,128 @@ o.spec("CalendarEventViewModel", function () {
 			o(viewModel.endDate.toISOString())
 				.equals(DateTime.fromObject({year: 2020, month: 6, day: 7, zone}).toJSDate().toISOString())
 			o(viewModel.endTime).equals("15:00")
+		})
+	})
+
+	o.spec("addAttendee", function () {
+		o("to new event", async function () {
+			const calendars = makeCalendars("own")
+			const viewModel = init({calendars, existingEvent: null})
+			const newGuest = "new-attendee@example.com"
+
+			viewModel.addAttendee(newGuest)
+
+			o(viewModel.attendees).deepEquals([
+				createCalendarEventAttendee({
+					address: createEncryptedMailAddress({address: newGuest}),
+					status: CalendarAttendeeStatus.NEEDS_ACTION,
+				})
+			])
+		})
+
+		o("to existing event", async function () {
+			const calendars = makeCalendars("own")
+			const existingEvent = createCalendarEvent({})
+			const viewModel = init({calendars, existingEvent})
+			const newGuest = "new-attendee@example.com"
+
+			viewModel.addAttendee(newGuest)
+
+			o(viewModel.attendees).deepEquals([
+				createCalendarEventAttendee({
+					address: createEncryptedMailAddress({address: newGuest}),
+					status: CalendarAttendeeStatus.NEEDS_ACTION,
+				})
+			])
+		})
+
+		o("to existing event as duplicate", async function () {
+			const calendars = makeCalendars("own")
+			const guest = "new-attendee@example.com"
+			const existingEvent = createCalendarEvent({
+				attendees: [createCalendarEventAttendee({address: createEncryptedMailAddress({address: guest})})]
+			})
+			const viewModel = init({calendars, existingEvent})
+
+			viewModel.addAttendee(guest)
+
+			o(viewModel.attendees).deepEquals([
+				createCalendarEventAttendee({
+					address: createEncryptedMailAddress({address: guest}),
+					status: CalendarAttendeeStatus.NEEDS_ACTION,
+				})
+			])
+		})
+	})
+
+	o.spec("selectGoing", function () {
+		o("self is added to the guests when selected in own event", async function () {
+			const calendars = makeCalendars("own")
+			const attendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: "guest@example.com"})
+			})
+			const existingEvent = createCalendarEvent({
+				attendees: [attendee]
+			})
+			const viewModel = init({calendars, existingEvent})
+
+			viewModel.selectGoing(CalendarAttendeeStatus.ACCEPTED)
+
+			o(viewModel.attendees[0]).deepEquals(createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: mailAddress}),
+				status: CalendarAttendeeStatus.ACCEPTED,
+			}))
+			o(viewModel.attendees[1]).deepEquals(attendee)
+		})
+
+		o("status of own attendee is changed selected in own event", async function () {
+			const calendars = makeCalendars("own")
+			const attendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: "guest@example.com"})
+			})
+			const ownAttendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: mailAddress})
+			})
+			const existingEvent = createCalendarEvent({
+				attendees: [attendee, ownAttendee]
+			})
+			const viewModel = init({calendars, existingEvent})
+
+			viewModel.selectGoing(CalendarAttendeeStatus.DECLINED)
+
+			o(viewModel.attendees).deepEquals([
+				attendee,
+				createCalendarEventAttendee({
+					address: ownAttendee.address,
+					status: CalendarAttendeeStatus.DECLINED
+				})
+			])
+		})
+
+		o("status of own attendee is changed selected in invite", async function () {
+			const calendars = makeCalendars("own")
+			const attendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: "guest@example.com"})
+			})
+			const ownAttendee = createCalendarEventAttendee({
+				address: createEncryptedMailAddress({address: mailAddress})
+			})
+			const existingEvent = createCalendarEvent({
+				attendees: [attendee, ownAttendee],
+				organizer: "organizer@example.com",
+				isCopy: true,
+			})
+			const viewModel = init({calendars, existingEvent})
+
+			viewModel.selectGoing(CalendarAttendeeStatus.TENTATIVE)
+
+			o(viewModel.attendees).deepEquals([
+				attendee,
+				createCalendarEventAttendee({
+					address: ownAttendee.address,
+					status: CalendarAttendeeStatus.TENTATIVE
+				})
+			])
 		})
 	})
 })
@@ -559,14 +772,14 @@ function makeCalendars(type: "own" | "shared"): Map<string, CalendarInfo> {
 	return new Map([[calendarGroupId, calendarInfo]])
 }
 
-function makeUserController(): IUserController {
+function makeUserController(aliases: Array<string> = []): IUserController {
 	return downcast({
 		user: createUser({_id: userId}),
 		props: {
 			defaultSender: mailAddress,
 		},
 		userGroupInfo: createGroupInfo({
-			mailAddressAliases: [],
+			mailAddressAliases: aliases.map((address) => createMailAddressAlias({mailAddress: address, enabled: true})),
 			mailAddress: mailAddress,
 		}),
 		userSettingsGroupRoot: {

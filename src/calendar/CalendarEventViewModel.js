@@ -40,8 +40,9 @@ import {generateEventElementId, isAllDayEvent} from "../api/common/utils/CommonC
 import {CalendarModel, incrementByRepeatPeriod} from "./CalendarModel"
 import m from "mithril"
 import {DateTime} from "luxon"
+import type {EncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
 import {createEncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
-import {remove} from "../api/common/utils/ArrayUtils"
+import {firstThrow, remove} from "../api/common/utils/ArrayUtils"
 import {load} from "../api/main/Entity"
 import {NotFoundError} from "../api/common/error/RestError"
 import type {CalendarRepeatRule} from "../api/entities/tutanota/CalendarRepeatRule"
@@ -87,7 +88,7 @@ export class CalendarEventViewModel {
 	+_isInSharedCalendar: boolean;
 	+_distributor: CalendarUpdateDistributor;
 	+_calendarModel: CalendarModel;
-	+_ownAttendee: ?CalendarEventAttendee;
+	+_mailAddresses: Array<string>
 
 	constructor(
 		userController: IUserController,
@@ -114,9 +115,9 @@ export class CalendarEventViewModel {
 		this.existingEvent = existingEvent
 		this._zone = zone
 		this.alarms = []
-		const mailAddresses = getEnabledMailAddressesWithUser(mailboxDetail, userController.userGroupInfo)
-		this._ownAttendee = this.attendees.find(a => mailAddresses.includes(a.address.address))
-		this.going = this._ownAttendee ? getAttendeeStatus(this._ownAttendee) : CalendarAttendeeStatus.NEEDS_ACTION
+		this._mailAddresses = getEnabledMailAddressesWithUser(mailboxDetail, userController.userGroupInfo)
+		const ownAttendee = this._findOwnAttendee()
+		this.going = ownAttendee ? getAttendeeStatus(ownAttendee) : CalendarAttendeeStatus.NEEDS_ACTION
 		this._user = userController.user
 
 		/**
@@ -161,7 +162,7 @@ export class CalendarEventViewModel {
 
 		this.possibleOrganizers = existingOrganizer && !this.canModifyOrganizer()
 			? [existingOrganizer]
-			: mailAddresses
+			: this._mailAddresses
 
 		if (existingEvent) {
 			this.summary(existingEvent.summary)
@@ -220,6 +221,10 @@ export class CalendarEventViewModel {
 		}
 	}
 
+	_findOwnAttendee() {
+		return this.attendees.find(a => this._mailAddresses.includes(a.address.address))
+	}
+
 	onStartTimeSelected(value: string) {
 		this.startTime = value
 		if (this.startDate.getTime() === this.endDate.getTime()) {
@@ -231,8 +236,10 @@ export class CalendarEventViewModel {
 		this.endTime = value
 	}
 
-	// TODO: add a name here
 	addAttendee(mailAddress: string) {
+		if (this.attendees.find((a) => a.address.address === mailAddress)) {
+			return
+		}
 		const attendee = createCalendarEventAttendee({
 			status: CalendarAttendeeStatus.NEEDS_ACTION,
 			address: createEncryptedMailAddress({address: mailAddress}),
@@ -357,7 +364,7 @@ export class CalendarEventViewModel {
 	}
 
 	canModifyOwnAttendance(): boolean {
-		return !this._isInSharedCalendar && (this._viewingOwnEvent() || !!this._ownAttendee)
+		return !this._isInSharedCalendar && (this._viewingOwnEvent() || !!this._findOwnAttendee())
 	}
 
 	canModifyOrganizer(): boolean {
@@ -365,7 +372,16 @@ export class CalendarEventViewModel {
 	}
 
 	_viewingOwnEvent(): boolean {
-		return !this.existingEvent || (!this.existingEvent.isCopy && this.possibleOrganizers.includes(this.existingEvent.organizer))
+		return (
+			!this.existingEvent
+			|| (
+				!this.existingEvent.isCopy
+				&& (
+					this.existingEvent.organizer == null ||
+					this.possibleOrganizers.includes(this.existingEvent.organizer)
+				)
+			)
+		)
 	}
 
 	/**
@@ -471,6 +487,9 @@ export class CalendarEventViewModel {
 		if (this._viewingOwnEvent()) {
 			if (existingEvent) {
 				this.attendees.forEach((a) => {
+					if (this._mailAddresses.includes(a.address.address)) {
+						return
+					}
 					if (existingEvent.attendees.find(ea => ea.address.address === a.address.address)) {
 						existingAttendees.push(a)
 					} else {
@@ -478,14 +497,16 @@ export class CalendarEventViewModel {
 					}
 				})
 				removedAttendees = existingEvent.attendees.filter((ea) =>
-					!this.attendees.find((a) => ea.address.address === a.address.address))
+					!this._mailAddresses.includes(ea.address.address)
+					&& !this.attendees.find((a) => ea.address.address === a.address.address)
+				)
 			} else {
 				newAttendees = this.attendees
 				removedAttendees = []
 			}
 		} else {
 			removedAttendees = []
-			const ownAttendee = this._ownAttendee
+			const ownAttendee = this._findOwnAttendee()
 			if (ownAttendee && this.going !== CalendarAttendeeStatus.NEEDS_ACTION && ownAttendee.status !== this.going) {
 				ownAttendee.status = this.going
 				this._distributor.sendResponse(newEvent, createMailAddress({
@@ -525,14 +546,14 @@ export class CalendarEventViewModel {
 				askForUpdates: (sendOutUpdate) => {
 					return doCreateEvent()
 						.then(() => sendOutUpdate && existingAttendees.length
-							? this._distributor.sendUpdate(newEvent, existingAttendees.map(a => a.address))
+							? this._distributor.sendUpdate(newEvent, this._distributionAddresses(existingAttendees))
 							: Promise.resolve())
 						.then(() => sendOutUpdate && newAttendees.length
-							? this._distributor.sendInvite(newEvent, newAttendees.map(a => a.address))
+							? this._distributor.sendInvite(newEvent, this._distributionAddresses(newAttendees))
 							: Promise.resolve())
 						.then(() => {
 							sendOutUpdate && removedAttendees.length
-								? this._distributor.sendCancellation(newEvent, removedAttendees.map(a => a.address))
+								? this._distributor.sendCancellation(newEvent, this._distributionAddresses(removedAttendees))
 								: Promise.resolve()
 						})
 				}
@@ -541,7 +562,7 @@ export class CalendarEventViewModel {
 			// just create the event
 			return doCreateEvent().then(() => {
 				if (newAttendees.length) {
-					return this._distributor.sendInvite(newEvent, newAttendees.map(a => a.address))
+					return this._distributor.sendInvite(newEvent, this._distributionAddresses(newAttendees))
 				}
 			}).then(() => {
 				return {
@@ -555,7 +576,22 @@ export class CalendarEventViewModel {
 	selectGoing(going: CalendarAttendeeStatusEnum) {
 		if (this.canModifyOwnAttendance()) {
 			this.going = going
+			const ownAttendee = this._findOwnAttendee()
+			if (ownAttendee) {
+				ownAttendee.status = going
+			} else {
+				this.attendees.unshift(createCalendarEventAttendee({
+					address: createEncryptedMailAddress({
+						address: firstThrow(this._mailAddresses)
+					}),
+					status: going,
+				}))
+			}
 		}
+	}
+
+	_distributionAddresses(guests: Array<CalendarEventAttendee>): Array<EncryptedMailAddress> {
+		return guests.map((a) => a.address)
 	}
 }
 

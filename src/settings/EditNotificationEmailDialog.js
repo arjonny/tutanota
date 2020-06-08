@@ -20,6 +20,7 @@ import {PreconditionFailedError} from "../api/common/error/RestError"
 import {SegmentControl} from "../gui/base/SegmentControl"
 import type {CustomerProperties} from "../api/entities/sys/CustomerProperties"
 import {insertInlineImageB64ClickHandler} from "../mail/MailViewerUtils"
+import type {SelectorItemList} from "../gui/base/DropDownSelectorN"
 
 export function show(existingTemplate: ?NotificationMailTemplate, customerProperties: LazyLoaded<CustomerProperties>) {
 	let template: NotificationMailTemplate
@@ -42,7 +43,7 @@ export function show(existingTemplate: ?NotificationMailTemplate, customerProper
 	const previewSegment = {name: lang.get("preview_label"), value: "preview"}
 	const selectedTab = stream(editSegment.value)
 
-	const sortedLanguages: Array<{name: string, value: string}> =
+	const sortedLanguages: SelectorItemList<string> =
 		languages.slice()
 		         .sort((a, b) => lang.get(a.textId).localeCompare(lang.get(b.textId)))
 		         .map(language => {
