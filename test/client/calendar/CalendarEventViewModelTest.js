@@ -322,6 +322,8 @@ o.spec("CalendarEventViewModel", function () {
 					})
 				],
 				organizer: mailAddress,
+				startTime: new Date(2020, 4, 5, 16),
+				endTime: new Date(2020, 4, 6, 20),
 			})
 			const viewModel = init({calendars, existingEvent, calendarModel, distributor})
 			viewModel.onStartDateSelected(new Date(2020, 4, 3))
@@ -353,6 +355,8 @@ o.spec("CalendarEventViewModel", function () {
 					toRemoveAttendee
 				],
 				organizer: mailAddress,
+				startTime: new Date(2020, 4, 5, 16),
+				endTime: new Date(2020, 4, 6, 20),
 			})
 			const viewModel = init({calendars, existingEvent, calendarModel, distributor})
 			viewModel.onStartDateSelected(new Date(2020, 4, 3))
@@ -388,6 +392,8 @@ o.spec("CalendarEventViewModel", function () {
 					toRemoveAttendee
 				],
 				organizer: mailAddress,
+				startTime: new Date(2020, 4, 5, 16),
+				endTime: new Date(2020, 4, 6, 20),
 			})
 			const viewModel = init({calendars, existingEvent, calendarModel, distributor})
 			viewModel.onStartDateSelected(new Date(2020, 4, 3))
@@ -418,6 +424,8 @@ o.spec("CalendarEventViewModel", function () {
 					toRemoveAttendee
 				],
 				organizer: mailAddress,
+				startTime: new Date(2020, 4, 5, 16),
+				endTime: new Date(2020, 4, 6, 20),
 			})
 			const viewModel = init({calendars, existingEvent, calendarModel, distributor})
 			viewModel.onStartDateSelected(new Date(2020, 4, 3))
@@ -460,6 +468,7 @@ o.spec("CalendarEventViewModel", function () {
 			o(createdEvent.attendees.length).equals(2)
 			o(createdEvent.attendees.find(a => a.address === ownAttendee.address).status).equals(CalendarAttendeeStatus.ACCEPTED)
 			o(createdEvent.attendees.find(a => a.address === anotherAttendee.address).status).equals(CalendarAttendeeStatus.DECLINED)
+			o(createdEvent.isCopy).equals(true)
 			o(distributor.sendUpdate.calls).deepEquals([])
 			o(distributor.sendInvite.calls).deepEquals([])
 			o(distributor.sendCancellation.calls).deepEquals([])
@@ -610,7 +619,7 @@ function makeCalendarModel(): CalendarModel {
 
 function assertAskedForUpdates(result: EventCreateResult): ((bool) => Promise<void>) {
 	if (result.status !== "ok") {
-		throw new Error("Result is not ok")
+		throw new Error(`Result is not ok: ${JSON.stringify(result)}`)
 	}
 	if (result.askForUpdates == null) {
 		throw new Error("Did not ask for updates")

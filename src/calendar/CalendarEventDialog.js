@@ -141,7 +141,7 @@ export function showCalendarEventDialog(date: Date, calendars: Map<Id, CalendarI
 
 				const iconElement = icon
 					? m(Icon, {icon, large: true})
-					: m(".icon", {
+					: m(".icon-large", {
 						style: {display: "block"}
 					})
 				const status: CalendarAttendeeStatusEnum = downcast(attendee.status)

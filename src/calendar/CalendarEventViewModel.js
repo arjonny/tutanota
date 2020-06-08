@@ -412,7 +412,7 @@ export class CalendarEventViewModel {
 		}
 
 		if (endDate.getTime() <= startDate.getTime()) {
-			return Promise.resolve({status: "error", error: "timeFormatInvalid_msg"})
+			return Promise.resolve({status: "error", error: "startAfterEnd_label"})
 		}
 		newEvent.startTime = startDate
 		newEvent.description = this.note
