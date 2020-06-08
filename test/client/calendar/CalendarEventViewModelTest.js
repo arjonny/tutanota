@@ -47,8 +47,8 @@ o.spec("CalendarEventViewModel", function () {
 		const viewModel = init({calendars: makeCalendars("own"), existingEvent})
 
 		o(viewModel.summary()).equals(existingEvent.summary)
-		o(viewModel.startDate.toISOString()).equals(DateTime.fromObject({year: 2020, month: 5, day: 26}).toJSDate().toISOString())
-		o(viewModel.endDate.toISOString()).equals(DateTime.fromObject({year: 2020, month: 5, day: 26}).toJSDate().toISOString())
+		o(viewModel.startDate.toISOString()).equals(DateTime.fromObject({year: 2020, month: 5, day: 26, zone}).toJSDate().toISOString())
+		o(viewModel.endDate.toISOString()).equals(DateTime.fromObject({year: 2020, month: 5, day: 26, zone}).toJSDate().toISOString())
 		o(viewModel.startTime).equals("12:00")
 		o(viewModel.endTime).equals("13:00")
 		o(viewModel.note).equals(existingEvent.description)
@@ -64,8 +64,8 @@ o.spec("CalendarEventViewModel", function () {
 	o("init all day event", function () {
 		const existingEvent = createCalendarEvent({
 			summary: "existing event",
-			startTime: getAllDayDateUTCFromZone(new Date(2020, 4, 26), zone),
-			endTime: getAllDayDateUTCFromZone(new Date(2020, 4, 27), zone),
+			startTime: getAllDayDateUTCFromZone(DateTime.fromObject({year: 2020, month: 5, day: 26, zone}).toJSDate(), zone),
+			endTime: getAllDayDateUTCFromZone(DateTime.fromObject({year: 2020, month: 5, day: 27, zone}).toJSDate(), zone),
 			description: "note",
 			location: "location",
 			_ownerGroup: calendarGroupId,

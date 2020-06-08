@@ -125,6 +125,11 @@ export function timeString(date: Date, amPm: boolean): string {
 	return timeStringFromParts(date.getHours(), date.getMinutes(), amPm)
 }
 
+export function timeStringInZone(date: Date, amPm: boolean, zone: string): string {
+	const {hour, minute} = DateTime.fromJSDate(date, {zone})
+	return timeStringFromParts(hour, minute, amPm)
+}
+
 export function timeStringFromParts(hours: number, minutes: number, amPm: boolean): string {
 	let minutesString = pad(minutes, 2)
 	if (amPm) {

@@ -33,7 +33,8 @@ import {
 	hasCapabilityOnGroup,
 	parseTime,
 	timeString,
-	timeStringFromParts
+	timeStringFromParts,
+	timeStringInZone
 } from "./CalendarUtils"
 import {clone, downcast, neverNull, noOp} from "../api/common/utils/Utils"
 import {generateEventElementId, isAllDayEvent} from "../api/common/utils/CommonCalendarUtils"
@@ -174,14 +175,14 @@ export class CalendarEventViewModel {
 			this.allDay(isAllDayEvent(existingEvent))
 			this.startDate = getStartOfDayWithZone(getEventStart(existingEvent, this._zone), this._zone)
 			if (this.allDay()) {
-				this.startTime = timeString(getEventStart(existingEvent, this._zone), this.amPmFormat)
-				this.endTime = timeString(getEventEnd(existingEvent, this._zone), this.amPmFormat)
+				this.startTime = timeStringInZone(getEventStart(existingEvent, this._zone), this.amPmFormat, this._zone)
+				this.endTime = timeStringInZone(getEventEnd(existingEvent, this._zone), this.amPmFormat, this._zone)
 				this.endDate = incrementDate(getEventEnd(existingEvent, this._zone), -1)
 			} else {
 				this.endDate = getStartOfDayWithZone(getEventEnd(existingEvent, this._zone), this._zone)
 			}
-			this.startTime = timeString(getEventStart(existingEvent, this._zone), this.amPmFormat)
-			this.endTime = timeString(getEventEnd(existingEvent, this._zone), this.amPmFormat)
+			this.startTime = timeStringInZone(getEventStart(existingEvent, this._zone), this.amPmFormat, this._zone)
+			this.endTime = timeStringInZone(getEventEnd(existingEvent, this._zone), this.amPmFormat, this._zone)
 			if (existingEvent.repeatRule) {
 				const existingRule = existingEvent.repeatRule
 				const repeat = {
@@ -419,13 +420,15 @@ export class CalendarEventViewModel {
 			if (!parsedStartTime || !parsedEndTime) {
 				return Promise.resolve({status: "error", error: "timeFormatInvalid_msg"})
 			}
-			startDate.setHours(parsedStartTime.hours)
-			startDate.setMinutes(parsedStartTime.minutes)
+			startDate = DateTime.fromJSDate(startDate, {zone: this._zone})
+			                    .set({hour: parsedStartTime.hours, minute: parsedStartTime.minutes})
+			                    .toJSDate()
 
 			// End date is never actually included in the event. For the whole day event the next day
 			// is the boundary. For the timed one the end time is the boundary.
-			endDate.setHours(parsedEndTime.hours)
-			endDate.setMinutes(parsedEndTime.minutes)
+			endDate = DateTime.fromJSDate(endDate, {zone: this._zone})
+			                  .set({hour: parsedEndTime.hours, minute: parsedEndTime.minutes})
+			                  .toJSDate()
 		}
 
 		if (endDate.getTime() <= startDate.getTime()) {
