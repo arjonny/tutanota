@@ -1,21 +1,27 @@
 //@flow
 import o from "ospec/ospec.js"
+import type {CalendarEvent} from "../../../src/api/entities/tutanota/CalendarEvent"
 import {createCalendarEvent} from "../../../src/api/entities/tutanota/CalendarEvent"
 import {createRepeatRuleWithValues, getAllDayDateUTCFromZone, getMonth, getTimeZone} from "../../../src/calendar/CalendarUtils"
 import {getStartOfDay} from "../../../src/api/common/utils/DateUtils"
-import {clone, neverNull} from "../../../src/api/common/utils/Utils"
+import {clone, downcast, neverNull, noOp} from "../../../src/api/common/utils/Utils"
 import {mapToObject} from "../../api/TestUtils"
+import type {CalendarModel} from "../../../src/calendar/CalendarModel"
 import {
 	addDaysForEvent,
 	addDaysForLongEvent,
 	addDaysForRecurringEvent,
+	CalendarModelImpl,
 	incrementByRepeatPeriod,
 	iterateEventOccurrences
 } from "../../../src/calendar/CalendarModel"
-import {AlarmInterval, EndType, RepeatPeriod} from "../../../src/api/common/TutanotaConstants"
+import {AlarmInterval, CalendarMethod, EndType, RepeatPeriod} from "../../../src/api/common/TutanotaConstants"
 import {DateTime} from "luxon"
 import {generateEventElementId, getAllDayDateUTC} from "../../../src/api/common/utils/CommonCalendarUtils"
-import type {CalendarEvent} from "../../../src/api/entities/tutanota/CalendarEvent"
+import type {EntityUpdateData} from "../../../src/api/main/EventController"
+import {EventController} from "../../../src/api/main/EventController"
+import {Notifications} from "../../../src/gui/Notifications"
+import {WorkerClient} from "../../../src/api/main/WorkerClient"
 
 o.spec("CalendarModel", function () {
 	o.spec("addDaysForEvent", function () {
@@ -676,8 +682,62 @@ o.spec("CalendarModel", function () {
 			])
 		})
 	})
+
+	o.spec("calendar event updates", function () {
+		o.only("reply", async function () {
+			const {eventController, sendEvent} = makeEventController()
+			const uid = "uid"
+			const existingEvent = createCalendarEvent({
+				uid,
+			})
+			const workerClient = makeWorkerClient({
+				getEventByUid: (loadUid) => uid === loadUid ? Promise.resolve(existingEvent) : Promise.resolve(null),
+				updateCalendarEvent: o.spy(() => Promise.resolve()),
+			})
+			const model = new CalendarModelImpl(makeNotifications(), eventController, workerClient)
+
+			await model.processCalendarUpdate("sender@example.com", {
+				method: CalendarMethod.REPLY,
+				contents: [
+					{
+						event: createCalendarEvent({
+							uid,
+						}),
+						alarms: []
+					}
+				]
+			})
+			o(workerClient.updateCalendarEvent.calls.length).equals(1)
+		})
+	})
 })
 
+function makeNotifications(): Notifications {
+	return downcast({})
+}
+
+function makeEventController(): {eventController: EventController, sendEvent: (EntityUpdateData) => void} {
+	const listeners = []
+	return {
+		eventController: downcast({
+			listeners,
+			addEntityListener: noOp,
+		}),
+		sendEvent: (update) => {
+			for (let listener of listeners) {
+				listener([update])
+			}
+		},
+	}
+}
+
+function makeWorkerClient(props: {
+	getEventByUid?: (String) => Promise<?CalendarEvent>,
+	updateCalendarEvent?: typeof WorkerClient.prototype.updateCalendarEvent,
+	createCalendarEvent?: typeof WorkerClient.prototype.createCalendarEvent,
+}): WorkerClient {
+	return downcast(props)
+}
 
 function cloneEventWithNewTime(event: CalendarEvent, startTime: Date, endTime: Date): CalendarEvent {
 	const clonedEvent = clone(event)

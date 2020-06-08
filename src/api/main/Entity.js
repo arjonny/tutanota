@@ -146,11 +146,23 @@ export function serviceRequestVoid<T>(service: Service, method: HttpMethodEnum, 
 }
 
 export interface API {
+	loadElement<T: Element>(typeRef: TypeRef<T>, id: Id): Promise<T>;
+
+	loadListElement<T: ListElement>(typeRef: TypeRef<T>, id: IdTuple): Promise<T>;
+
 	erase<T: Element | ListElement>(entity: T): Promise<void>;
 }
 
 // doesn't accept anything for now, should forward to EntityRestInterface
 export class ClientsideAPI implements API {
+	loadElement<T: Element>(typeRef: TypeRef<T>, id: Id): Promise<T> {
+		return load(typeRef, id)
+	}
+
+	loadListElement<T: ListElement>(typeRef: TypeRef<T>, id: IdTuple): Promise<T> {
+		return load(typeRef, id)
+	}
+
 	erase<T: Element | ListElement>(entity: T): Promise<void> {
 		return erase(entity)
 	}

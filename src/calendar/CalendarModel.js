@@ -22,7 +22,7 @@ import {isAllDayEvent, isAllDayEventByTimes} from "../api/common/utils/CommonCal
 import {Notifications} from "../gui/Notifications"
 import type {EntityUpdateData} from "../api/main/EventController"
 import {EventController, isUpdateForTypeRef} from "../api/main/EventController"
-import {worker} from "../api/main/WorkerClient"
+import {worker, WorkerClient} from "../api/main/WorkerClient"
 import {locator} from "../api/main/MainLocator"
 import {getElementId, HttpMethod, isSameId} from "../api/common/EntityFunctions"
 import {erase, load, loadAll, serviceRequestVoid} from "../api/main/Entity"
@@ -339,12 +339,14 @@ export interface CalendarModel {
 
 export class CalendarModelImpl implements CalendarModel {
 	_notifications: Notifications;
+	_worker: WorkerClient;
 	_scheduledNotifications: Map<string, TimeoutID>;
 	/** Map from calendar event element id to the deferred object with a promise of getting CREATE event for this calendar event */
 	_pendingAlarmRequests: Map<string, DeferredObject<void>>;
 
-	constructor(notifications: Notifications, eventController: EventController) {
+	constructor(notifications: Notifications, eventController: EventController, worker: WorkerClient) {
 		this._notifications = notifications
+		this._worker = worker
 		this._scheduledNotifications = new Map()
 		this._pendingAlarmRequests = new Map()
 		if (!isApp()) {
@@ -356,12 +358,12 @@ export class CalendarModelImpl implements CalendarModel {
 
 	/** Create new event or re-create existing one when significant parts (like start time) have changed */
 	createEvent(event: CalendarEvent, alarmInfos: Array<AlarmInfo>, oldEvent: ?CalendarEvent): Promise<void> {
-		return worker.createCalendarEvent(event, alarmInfos, oldEvent)
+		return this._worker.createCalendarEvent(event, alarmInfos, oldEvent)
 	}
 
 	/** Update existing event when time did not change */
 	updateEvent(newEvent: CalendarEvent, newAlarms: Array<AlarmInfo>, existingEvent: CalendarEvent): Promise<void> {
-		return worker.updateCalendarEvent(newEvent, newAlarms, existingEvent)
+		return this._worker.updateCalendarEvent(newEvent, newAlarms, existingEvent)
 	}
 
 	deleteEvent(event: CalendarEvent): Promise<void> {
@@ -382,13 +384,15 @@ export class CalendarModelImpl implements CalendarModel {
 
 	_handleCalendarEventUpdate(update: CalendarEventUpdate) {
 		return load(FileTypeRef, update.file)
-			.then((file) => worker.downloadFileContent(file))
+			.then((file) => this._worker.downloadFileContent(file))
 			.then((dataFile: DataFile) => parseCalendarFile(dataFile))
-			.then((parsedCalendarData) => this._processCalendarUpdate(update.sender, parsedCalendarData))
+			.then((parsedCalendarData) => this.processCalendarUpdate(update.sender, parsedCalendarData))
 			.then(() => erase(update))
 	}
 
-	_processCalendarUpdate(sender: string, calendarData: ParsedCalendarData) {
+	// We need to separate processing from talking to the worker
+
+	processCalendarUpdate(sender: string, calendarData: ParsedCalendarData) {
 		if (calendarData.contents.length !== 1) {
 			console.log(`Calendar update with ${calendarData.contents.length} events, ignoring`)
 			return
@@ -402,7 +406,7 @@ export class CalendarModelImpl implements CalendarModel {
 
 		if (calendarData.method === CalendarMethod.REPLY) {
 			// Process it
-			return worker.getEventByUid(uid).then((dbEvent) => {
+			return this._worker.getEventByUid(uid).then((dbEvent) => {
 				if (dbEvent == null) {
 					console.log("event was not found", uid)
 					return
@@ -423,10 +427,10 @@ export class CalendarModelImpl implements CalendarModel {
 				dbAttendee.status = replyAttendee.status
 				console.log("updating event with reply status", updatedEvent.uid, updatedEvent._id)
 				// TODO: check alarmInfo
-				return worker.updateCalendarEvent(updatedEvent, [], dbEvent)
+				return this._worker.updateCalendarEvent(updatedEvent, [], dbEvent)
 			})
 		} else if (calendarData.method === CalendarMethod.REQUEST) { // Either initial invite or update
-			return worker.getEventByUid(uid).then((dbEvent) => {
+			return this._worker.getEventByUid(uid).then((dbEvent) => {
 				if (dbEvent) {
 					// then it's an update
 					if (dbEvent.organizer !== sender) {
@@ -446,11 +450,11 @@ export class CalendarModelImpl implements CalendarModel {
 					// newEvent.repeatRule = event.repeatRule
 
 					console.log("Updating event", dbEvent.uid, dbEvent._id)
-					return worker.updateCalendarEvent(newEvent, [], dbEvent)
+					return this._worker.updateCalendarEvent(newEvent, [], dbEvent)
 				}
 			})
 		} else if (calendarData.method === CalendarMethod.CANCEL) {
-			return worker.getEventByUid(uid).then((dbEvent) => {
+			return this._worker.getEventByUid(uid).then((dbEvent) => {
 				if (dbEvent != null) {
 					if (dbEvent.organizer !== sender) {
 						console.log("CANCEL sent not by organizer, ignoring")
@@ -470,12 +474,12 @@ export class CalendarModelImpl implements CalendarModel {
 
 	scheduleAlarmsLocally(): Promise<void> {
 		if (this._localAlarmsEnabled()) {
-			return worker.loadAlarmEvents()
-			             .then((eventsWithInfos) => {
-				             eventsWithInfos.forEach(({event, userAlarmInfo}) => {
-					             this.scheduleUserAlarmInfo(event, userAlarmInfo)
-				             })
-			             })
+			return this._worker.loadAlarmEvents()
+			           .then((eventsWithInfos) => {
+				           eventsWithInfos.forEach(({event, userAlarmInfo}) => {
+					           this.scheduleUserAlarmInfo(event, userAlarmInfo)
+				           })
+			           })
 		} else {
 			return Promise.resolve()
 		}
@@ -583,7 +587,7 @@ export class CalendarModelImpl implements CalendarModel {
 	}
 }
 
-export const calendarModel = new CalendarModelImpl(new Notifications(), locator.eventController)
+export const calendarModel = new CalendarModelImpl(new Notifications(), locator.eventController, worker)
 
 if (replaced) {
 	Object.assign(calendarModel, replaced.calendarModel)
