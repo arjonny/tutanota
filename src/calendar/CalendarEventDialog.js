@@ -140,25 +140,24 @@ export function showCalendarEventDialog(date: Date, calendars: Map<Id, CalendarI
 				const icon = iconForStatus[attendee.status]
 
 				const iconElement = icon
-					? m(Icon, {icon})
+					? m(Icon, {icon, large: true})
 					: m(".icon", {
-						style: {display: "inline-block"}
+						style: {display: "block"}
 					})
 				const status: CalendarAttendeeStatusEnum = downcast(attendee.status)
-				return m("", {
-					style: {display: "inline-block"},
+				return m(".mr-s", {
+					style: {display: "block"},
 					title: calendarAttendeeStatusDescription(status)
 				}, iconElement)
 			}
 
 			const renderGuest = a => m(".flex.mr-negative-s", [
-				m(".flex-grow", {
+				m(".flex.flex-grow.items-center", {
 						style: {
 							height: px(size.button_height),
-							"lineHeight": px(size.button_height),
 						},
 					},
-					[renderStatusIcon(a), `${a.address.name || ""} ${a.address.address}`]
+					[renderStatusIcon(a), m("div", a.address.name ? `${a.address.name} ${a.address.address}` : a.address.address)]
 				),
 				viewModel.canModifyGuests()
 					? m(ButtonN, {
