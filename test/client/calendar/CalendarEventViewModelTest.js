@@ -362,7 +362,7 @@ o.spec("CalendarEventViewModel", function () {
 			const viewModel = init({calendars, existingEvent, calendarModel, distributor})
 			viewModel.onStartDateSelected(new Date(2020, 4, 3))
 			viewModel.addAttendee(newGuest)
-			viewModel.removeAttendee(toRemoveAttendee)
+			viewModel.removeAttendee(toRemoveGuest)
 
 			const result = await viewModel.onOkPressed()
 			const askForUpdates = assertAskedForUpdates(result)
@@ -370,9 +370,9 @@ o.spec("CalendarEventViewModel", function () {
 			await askForUpdates(true)
 
 			o(calendarModel.createEvent.calls.length).equals(1)("created event")
-			o(distributor.sendUpdate.calls[0].args[1]).deepEquals([createEncryptedMailAddress({address: oldGuest})])
-			o(distributor.sendInvite.calls[0].args[1]).deepEquals([createEncryptedMailAddress({address: newGuest})])
-			o(distributor.sendCancellation.calls[0].args[1]).deepEquals([toRemoveAttendee.address])
+			o(distributor.sendUpdate.calls[0].args[1]).deepEquals([createEncryptedMailAddress({address: oldGuest})])("update")
+			o(distributor.sendInvite.calls[0].args[1]).deepEquals([createEncryptedMailAddress({address: newGuest})])("invite")
+			o(distributor.sendCancellation.calls[0].args[1]).deepEquals([toRemoveAttendee.address])("cancel")
 		})
 
 		o("own calendar, old, new, removed guests, do not send updates", async function () {
@@ -399,7 +399,7 @@ o.spec("CalendarEventViewModel", function () {
 			const viewModel = init({calendars, existingEvent, calendarModel, distributor})
 			viewModel.onStartDateSelected(new Date(2020, 4, 3))
 			viewModel.addAttendee(newGuest)
-			viewModel.removeAttendee(toRemoveAttendee)
+			viewModel.removeAttendee(toRemoveGuest)
 
 			const result = await viewModel.onOkPressed()
 			const askForUpdates = assertAskedForUpdates(result)
@@ -430,7 +430,7 @@ o.spec("CalendarEventViewModel", function () {
 			})
 			const viewModel = init({calendars, existingEvent, calendarModel, distributor})
 			viewModel.onStartDateSelected(new Date(2020, 4, 3))
-			viewModel.removeAttendee(toRemoveAttendee)
+			viewModel.removeAttendee(toRemoveGuest)
 
 			const result = await viewModel.onOkPressed()
 			const askForUpdates = assertAskedForUpdates(result)
@@ -467,8 +467,10 @@ o.spec("CalendarEventViewModel", function () {
 			o(result).deepEquals({status: "ok", askForUpdates: null})
 			const [createdEvent] = calendarModel.createEvent.calls[0].args
 			o(createdEvent.attendees.length).equals(2)
-			o(createdEvent.attendees.find(a => a.address === ownAttendee.address).status).equals(CalendarAttendeeStatus.ACCEPTED)
-			o(createdEvent.attendees.find(a => a.address === anotherAttendee.address).status).equals(CalendarAttendeeStatus.DECLINED)
+			o(createdEvent.attendees.find(a =>
+				a.address.address === ownAttendee.address.address).status).equals(CalendarAttendeeStatus.ACCEPTED)
+			o(createdEvent.attendees.find(a =>
+				a.address.address === anotherAttendee.address.address).status).equals(CalendarAttendeeStatus.DECLINED)
 			o(createdEvent.isCopy).equals(true)
 			o(distributor.sendUpdate.calls).deepEquals([])
 			o(distributor.sendInvite.calls).deepEquals([])

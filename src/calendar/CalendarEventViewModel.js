@@ -42,7 +42,7 @@ import m from "mithril"
 import {DateTime} from "luxon"
 import type {EncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
 import {createEncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
-import {firstThrow, remove} from "../api/common/utils/ArrayUtils"
+import {findAndRemove, firstThrow} from "../api/common/utils/ArrayUtils"
 import {load} from "../api/main/Entity"
 import {NotFoundError} from "../api/common/error/RestError"
 import type {CalendarRepeatRule} from "../api/entities/tutanota/CalendarRepeatRule"
@@ -105,7 +105,8 @@ export class CalendarEventViewModel {
 		this.summary = stream("")
 		this.calendars = Array.from(calendars.values())
 		this.selectedCalendar = stream(this.calendars[0])
-		this.attendees = existingEvent && existingEvent.attendees.slice() || []
+		// TODO: check if it's okay to clone here regarding hidden fields
+		this.attendees = existingEvent && existingEvent.attendees.map(clone) || []
 		const existingOrganizer = existingEvent && existingEvent.organizer
 		this.organizer = existingOrganizer || getDefaultSenderFromUser(userController)
 		this.location = stream("")
@@ -359,8 +360,8 @@ export class CalendarEventViewModel {
 		return !this._isInSharedCalendar && (!this.existingEvent || !this.existingEvent.isCopy)
 	}
 
-	removeAttendee(guest: CalendarEventAttendee) {
-		remove(this.attendees, guest)
+	removeAttendee(address: string) {
+		findAndRemove(this.attendees, (a) => a.address.address === address)
 	}
 
 	canModifyOwnAttendance(): boolean {
@@ -501,18 +502,21 @@ export class CalendarEventViewModel {
 					&& !this.attendees.find((a) => ea.address.address === a.address.address)
 				)
 			} else {
-				newAttendees = this.attendees
+				newAttendees = this.attendees.filter(a => !this._mailAddresses.includes(a.address.address))
 				removedAttendees = []
 			}
 		} else {
 			removedAttendees = []
-			const ownAttendee = this._findOwnAttendee()
-			if (ownAttendee && this.going !== CalendarAttendeeStatus.NEEDS_ACTION && ownAttendee.status !== this.going) {
-				ownAttendee.status = this.going
-				this._distributor.sendResponse(newEvent, createMailAddress({
-					name: ownAttendee.address.name,
-					address: ownAttendee.address.address,
-				}), this.going)
+			if (existingEvent) {
+				// We are not using this._findAttendee() because we want to search it on the event, before our modifications
+				const ownAttendee = existingEvent.attendees.find(a => this._mailAddresses.includes(a.address.address))
+				if (ownAttendee && this.going !== CalendarAttendeeStatus.NEEDS_ACTION && ownAttendee.status !== this.going) {
+					ownAttendee.status = this.going
+					this._distributor.sendResponse(newEvent, createMailAddress({
+						name: ownAttendee.address.name,
+						address: ownAttendee.address.address,
+					}), this.going)
+				}
 			}
 		}
 

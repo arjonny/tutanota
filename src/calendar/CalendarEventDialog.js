@@ -164,7 +164,7 @@ export function showCalendarEventDialog(date: Date, calendars: Map<Id, CalendarI
 						label: "delete_action",
 						type: ButtonType.Action,
 						icon: () => Icons.Cancel,
-						click: () => viewModel.removeAttendee(a)
+						click: () => viewModel.removeAttendee(a.address.address)
 					})
 					: null
 			])
