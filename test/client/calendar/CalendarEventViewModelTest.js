@@ -482,6 +482,38 @@ o.spec("CalendarEventViewModel", function () {
 			o(createdEvent.endTime.toISOString()).deepEquals(endTime.toISOString())
 		})
 	})
+
+	o.spec("onStartDateSelected", function () {
+		o("date adjusted forward", async function () {
+			const calendars = makeCalendars("own")
+			const existingEvent = createCalendarEvent({
+				startTime: DateTime.fromObject({year: 2020, month: 6, day: 8, hour: 13, zone}).toJSDate(),
+				endTime: DateTime.fromObject({year: 2020, month: 6, day: 9, hour: 15, zone}).toJSDate(),
+			})
+			const viewModel = init({calendars, existingEvent})
+			viewModel.onStartDateSelected(DateTime.fromObject({year: 2020, month: 6, day: 10, zone}).toJSDate())
+
+			// No hours because it's a "date", not "time" field.
+			o(viewModel.endDate.toISOString())
+				.equals(DateTime.fromObject({year: 2020, month: 6, day: 11, zone}).toJSDate().toISOString())
+			o(viewModel.endTime).equals("15:00")
+		})
+
+		o("date adjusted backwards", async function () {
+			const calendars = makeCalendars("own")
+			const existingEvent = createCalendarEvent({
+				startTime: DateTime.fromObject({year: 2020, month: 6, day: 8, hour: 13, zone}).toJSDate(),
+				endTime: DateTime.fromObject({year: 2020, month: 6, day: 9, hour: 15, zone}).toJSDate(),
+			})
+			const viewModel = init({calendars, existingEvent})
+			viewModel.onStartDateSelected(DateTime.fromObject({year: 2020, month: 6, day: 6, zone}).toJSDate())
+
+			// No hours because it's a "date", not "time" field.
+			o(viewModel.endDate.toISOString())
+				.equals(DateTime.fromObject({year: 2020, month: 6, day: 7, zone}).toJSDate().toISOString())
+			o(viewModel.endTime).equals("15:00")
+		})
+	})
 })
 
 function init({userController, distributor, mailboxDetail, calendars, existingEvent, calendarModel}: {

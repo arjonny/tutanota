@@ -25,6 +25,7 @@ import {
 	generateUid,
 	getAllDayDateForTimezone,
 	getAllDayDateUTCFromZone,
+	getDiffInDays,
 	getEventEnd,
 	getEventStart,
 	getStartOfDayWithZone,
@@ -38,6 +39,7 @@ import {clone, downcast, neverNull, noOp} from "../api/common/utils/Utils"
 import {generateEventElementId, isAllDayEvent} from "../api/common/utils/CommonCalendarUtils"
 import {CalendarModel, incrementByRepeatPeriod} from "./CalendarModel"
 import m from "mithril"
+import {DateTime} from "luxon"
 import {createEncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
 import {remove} from "../api/common/utils/ArrayUtils"
 import {load} from "../api/main/Entity"
@@ -268,6 +270,8 @@ export class CalendarEventViewModel {
 				newDate.setFullYear(thisYear)
 				this.startDate = newDate
 			} else {
+				const diff = getDiffInDays(date, this.startDate)
+				this.endDate = DateTime.fromJSDate(this.endDate, {zone: this._zone}).plus({days: diff}).toJSDate()
 				this.startDate = date
 			}
 		}
