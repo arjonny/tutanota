@@ -829,6 +829,7 @@ function makeCalendarModel(): CalendarModel {
 		createEvent: o.spy(() => Promise.resolve()),
 		updateEvent: o.spy(() => Promise.resolve()),
 		deleteEvent: o.spy(() => Promise.resolve()),
+		loadAlarms: o.spy(() => Promise.resolve([]))
 	}
 }
 

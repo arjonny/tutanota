@@ -24,8 +24,8 @@ import type {EntityUpdateData} from "../api/main/EventController"
 import {EventController, isUpdateForTypeRef} from "../api/main/EventController"
 import {worker, WorkerClient} from "../api/main/WorkerClient"
 import {locator} from "../api/main/MainLocator"
-import {getElementId, HttpMethod, isSameId} from "../api/common/EntityFunctions"
-import {erase, load, loadAll, serviceRequestVoid} from "../api/main/Entity"
+import {elementIdPart, getElementId, HttpMethod, isSameId, listIdPart} from "../api/common/EntityFunctions"
+import {erase, load, loadAll, loadMultipleList, serviceRequestVoid} from "../api/main/Entity"
 import type {UserAlarmInfo} from "../api/entities/sys/UserAlarmInfo"
 import {UserAlarmInfoTypeRef} from "../api/entities/sys/UserAlarmInfo"
 import type {CalendarEvent} from "../api/entities/tutanota/CalendarEvent"
@@ -38,6 +38,7 @@ import {NotFoundError} from "../api/common/error/RestError"
 import {client} from "../misc/ClientDetector"
 import {insertIntoSortedArray} from "../api/common/utils/ArrayUtils"
 import m from "mithril"
+import type {User} from "../api/entities/sys/User"
 import {UserTypeRef} from "../api/entities/sys/User"
 import {CalendarGroupRootTypeRef} from "../api/entities/tutanota/CalendarGroupRoot"
 import {GroupInfoTypeRef} from "../api/entities/sys/GroupInfo"
@@ -53,6 +54,7 @@ import {createMembershipRemoveData} from "../api/entities/sys/MembershipRemoveDa
 import {SysService} from "../api/entities/sys/Services"
 import {GroupTypeRef} from "../api/entities/sys/Group"
 import type {AlarmInfo} from "../api/entities/sys/AlarmInfo"
+import type {IUserController} from "../api/main/UserController"
 
 
 function eventComparator(l: CalendarEvent, r: CalendarEvent): number {
@@ -335,18 +337,22 @@ export interface CalendarModel {
 	updateEvent(newEvent: CalendarEvent, newAlarms: Array<AlarmInfo>, existingEvent: CalendarEvent): Promise<void>;
 
 	deleteEvent(event: CalendarEvent): Promise<void>;
+
+	loadAlarms(alarmInfos: Array<IdTuple>, user: User): Promise<Array<UserAlarmInfo>>;
 }
 
 export class CalendarModelImpl implements CalendarModel {
 	_notifications: Notifications;
 	_worker: WorkerClient;
+	_userController: IUserController;
 	_scheduledNotifications: Map<string, TimeoutID>;
 	/** Map from calendar event element id to the deferred object with a promise of getting CREATE event for this calendar event */
 	_pendingAlarmRequests: Map<string, DeferredObject<void>>;
 
-	constructor(notifications: Notifications, eventController: EventController, worker: WorkerClient) {
+	constructor(notifications: Notifications, eventController: EventController, worker: WorkerClient, userController: IUserController) {
 		this._notifications = notifications
 		this._worker = worker
+		this._userController = userController
 		this._scheduledNotifications = new Map()
 		this._pendingAlarmRequests = new Map()
 		if (!isApp()) {
@@ -426,8 +432,11 @@ export class CalendarModelImpl implements CalendarModel {
 				}
 				dbAttendee.status = replyAttendee.status
 				console.log("updating event with reply status", updatedEvent.uid, updatedEvent._id)
-				// TODO: check alarmInfo
-				return this._worker.updateCalendarEvent(updatedEvent, [], dbEvent)
+				return this.loadAlarms(dbEvent.alarmInfos, this._userController.user)
+				           .then((alarms) => {
+					           const alarmInfos = alarms.map((a) => a.alarmInfo)
+					           return this._worker.updateCalendarEvent(updatedEvent, alarmInfos, dbEvent)
+				           })
 			})
 		} else if (calendarData.method === CalendarMethod.REQUEST) { // Either initial invite or update
 			return this._worker.getEventByUid(uid).then((dbEvent) => {
@@ -512,6 +521,15 @@ export class CalendarModelImpl implements CalendarModel {
 		}
 	}
 
+	loadAlarms(alarmInfos: Array<IdTuple>, user: User): Promise<Array<UserAlarmInfo>> {
+		const ids = alarmInfos
+			.filter((alarmInfoId) => isSameId(listIdPart(alarmInfoId), neverNull(user.alarmInfoList).alarms))
+		if (ids.length === 0) {
+			return Promise.resolve([])
+		}
+		return loadMultipleList(this._worker, UserAlarmInfoTypeRef, listIdPart(ids[0]), ids.map(elementIdPart))
+	}
+
 	_scheduleNotification(identifier: string, event: CalendarEvent, time: Date) {
 		this._runAtDate(time, identifier, () => {
 			const title = lang.get("reminder_label")
@@ -587,7 +605,7 @@ export class CalendarModelImpl implements CalendarModel {
 	}
 }
 
-export const calendarModel = new CalendarModelImpl(new Notifications(), locator.eventController, worker)
+export const calendarModel = new CalendarModelImpl(new Notifications(), locator.eventController, worker, logins.getUserController())
 
 if (replaced) {
 	Object.assign(calendarModel, replaced.calendarModel)

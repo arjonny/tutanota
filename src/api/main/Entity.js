@@ -61,6 +61,14 @@ export function loadMultiple<T: SomeEntity>(typeRef: TypeRef<T>, listId: ?Id, el
 	return _loadMultipleEntities(typeRef, listId, elementIds, worker)
 }
 
+/**
+ * load multiple does not guarantee order or completeness of returned elements.
+ */
+export function loadMultipleList<T: ListElement>(restInterface: EntityRestInterface, typeRef: TypeRef<T>, listId: Id, elementIds: Id[]
+): Promise<T[]> {
+	return _loadMultipleEntities(typeRef, listId, elementIds, restInterface)
+}
+
 export function loadRange<T: ListElement>(typeRef: TypeRef<T>, listId: Id, start: Id, count: number,
                                           reverse: boolean): Promise<T[]> {
 	return _loadEntityRange(typeRef, listId, start, count, reverse, worker)

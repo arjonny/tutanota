@@ -44,11 +44,8 @@ import {DateTime} from "luxon"
 import type {EncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
 import {createEncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
 import {findAndRemove, firstThrow} from "../api/common/utils/ArrayUtils"
-import {load} from "../api/main/Entity"
 import {NotFoundError} from "../api/common/error/RestError"
 import type {CalendarRepeatRule} from "../api/entities/tutanota/CalendarRepeatRule"
-import {isSameId, listIdPart} from "../api/common/EntityFunctions"
-import {UserAlarmInfoTypeRef} from "../api/entities/sys/UserAlarmInfo"
 import type {User} from "../api/entities/sys/User"
 import {incrementDate} from "../api/common/utils/DateUtils"
 import type {CalendarUpdateDistributor} from "./CalendarUpdateDistributor"
@@ -205,13 +202,9 @@ export class CalendarEventViewModel {
 			this.location(existingEvent.location)
 			this.note = existingEvent.description
 
-			for (let alarmInfoId of existingEvent.alarmInfos) {
-				if (isSameId(listIdPart(alarmInfoId), neverNull(this._user.alarmInfoList).alarms)) {
-					load(UserAlarmInfoTypeRef, alarmInfoId).then((userAlarmInfo) => {
-						this.addAlarm(downcast(userAlarmInfo.alarmInfo.trigger))
-					})
-				}
-			}
+			this._calendarModel.loadAlarms(existingEvent.alarmInfos, this._user).then((alarms) => {
+				alarms.forEach((alarm) => this.addAlarm(downcast(alarm.alarmInfo.trigger)))
+			})
 		} else {
 			const endTimeDate = new Date(date)
 			endTimeDate.setMinutes(endTimeDate.getMinutes() + 30)

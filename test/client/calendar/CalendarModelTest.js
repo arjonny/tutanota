@@ -15,13 +15,21 @@ import {
 	incrementByRepeatPeriod,
 	iterateEventOccurrences
 } from "../../../src/calendar/CalendarModel"
-import {AlarmInterval, CalendarMethod, EndType, RepeatPeriod} from "../../../src/api/common/TutanotaConstants"
+import {AlarmInterval, CalendarAttendeeStatus, CalendarMethod, EndType, RepeatPeriod} from "../../../src/api/common/TutanotaConstants"
 import {DateTime} from "luxon"
 import {generateEventElementId, getAllDayDateUTC} from "../../../src/api/common/utils/CommonCalendarUtils"
 import type {EntityUpdateData} from "../../../src/api/main/EventController"
 import {EventController} from "../../../src/api/main/EventController"
 import {Notifications} from "../../../src/gui/Notifications"
 import {WorkerClient} from "../../../src/api/main/WorkerClient"
+import {createCalendarEventAttendee} from "../../../src/api/entities/tutanota/CalendarEventAttendee"
+import {createEncryptedMailAddress} from "../../../src/api/entities/tutanota/EncryptedMailAddress"
+import {createAlarmInfo} from "../../../src/api/entities/sys/AlarmInfo"
+import {EntityRestClientMock} from "../../api/worker/EntityRestClientMock"
+import type {IUserController} from "../../../src/api/main/UserController"
+import {createUser} from "../../../src/api/entities/sys/User"
+import {createUserAlarmInfoListType} from "../../../src/api/entities/sys/UserAlarmInfoListType"
+import {createUserAlarmInfo} from "../../../src/api/entities/sys/UserAlarmInfo"
 
 o.spec("CalendarModel", function () {
 	o.spec("addDaysForEvent", function () {
@@ -684,8 +692,8 @@ o.spec("CalendarModel", function () {
 	})
 
 	o.spec("calendar event updates", function () {
-		o.only("reply", async function () {
-			const {eventController, sendEvent} = makeEventController()
+		o("reply but sender is not a guest", async function () {
+			const {eventController} = makeEventController()
 			const uid = "uid"
 			const existingEvent = createCalendarEvent({
 				uid,
@@ -694,7 +702,7 @@ o.spec("CalendarModel", function () {
 				getEventByUid: (loadUid) => uid === loadUid ? Promise.resolve(existingEvent) : Promise.resolve(null),
 				updateCalendarEvent: o.spy(() => Promise.resolve()),
 			})
-			const model = new CalendarModelImpl(makeNotifications(), eventController, workerClient)
+			const model = new CalendarModelImpl(makeNotifications(), eventController, workerClient, makeUserController())
 
 			await model.processCalendarUpdate("sender@example.com", {
 				method: CalendarMethod.REPLY,
@@ -707,7 +715,77 @@ o.spec("CalendarModel", function () {
 					}
 				]
 			})
-			o(workerClient.updateCalendarEvent.calls.length).equals(1)
+			o(workerClient.updateCalendarEvent.calls.length).equals(0)
+		})
+
+		o.only("reply", async function () {
+			const {eventController} = makeEventController()
+			const uid = "uid"
+			const sender = "sender@example.com"
+			const anotherGuest = "another-attendee"
+			const alarm = createAlarmInfo({_id: "alarm-id"})
+			const userController = makeUserController()
+			const alarmsListId = neverNull(userController.user.alarmInfoList).alarms
+			const existingEvent = createCalendarEvent({
+				uid,
+				summary: "v1",
+				attendees: [
+					createCalendarEventAttendee({
+						address: createEncryptedMailAddress({address: sender}),
+						status: CalendarAttendeeStatus.NEEDS_ACTION,
+					}),
+					createCalendarEventAttendee({
+						address: createEncryptedMailAddress({address: anotherGuest}),
+						status: CalendarAttendeeStatus.NEEDS_ACTION,
+					}),
+				],
+				alarmInfos: [[alarmsListId, alarm._id]]
+			})
+			const workerMock = new WorkerMock()
+			workerMock.addListInstances(createUserAlarmInfo({
+				_id: [alarmsListId, alarm._id],
+				alarmInfo: alarm,
+			}))
+			workerMock.eventByUid.set(uid, existingEvent)
+			const workerClient = makeWorkerClient(workerMock)
+			const model = new CalendarModelImpl(makeNotifications(), eventController, workerClient, userController)
+
+			await model.processCalendarUpdate(sender, {
+				summary: "v2", // should be ignored
+				method: CalendarMethod.REPLY,
+				contents: [
+					{
+						event: createCalendarEvent({
+							uid,
+							attendees: [
+								createCalendarEventAttendee({
+									address: createEncryptedMailAddress({address: sender}),
+									status: CalendarAttendeeStatus.ACCEPTED,
+								}),
+								createCalendarEventAttendee({ // should be ignored
+									address: createEncryptedMailAddress({address: anotherGuest}),
+									status: CalendarAttendeeStatus.DECLINED,
+								}),
+							]
+						}),
+						alarms: [],
+					}
+				]
+			})
+			const [createdEvent, alarms, oldEvent] = workerClient.updateCalendarEvent.calls[0].args
+			o(createdEvent.uid).equals(existingEvent.uid)
+			o(createdEvent.summary).equals(existingEvent.summary)
+			o(createdEvent.attendees).deepEquals([
+				createCalendarEventAttendee({
+					address: createEncryptedMailAddress({address: sender}),
+					status: CalendarAttendeeStatus.ACCEPTED,
+				}),
+				createCalendarEventAttendee({
+					address: createEncryptedMailAddress({address: "another-attendee"}),
+					status: CalendarAttendeeStatus.NEEDS_ACTION,
+				}),
+			])
+			o(alarms).deepEquals([alarm])
 		})
 	})
 })
@@ -731,12 +809,21 @@ function makeEventController(): {eventController: EventController, sendEvent: (E
 	}
 }
 
-function makeWorkerClient(props: {
-	getEventByUid?: (String) => Promise<?CalendarEvent>,
-	updateCalendarEvent?: typeof WorkerClient.prototype.updateCalendarEvent,
-	createCalendarEvent?: typeof WorkerClient.prototype.createCalendarEvent,
-}): WorkerClient {
+function makeWorkerClient<T: $Shape<WorkerClient>>(props: T): WorkerClient {
 	return downcast(props)
+}
+
+const t: $Shape<WorkerClient> = {
+	extra: "ha"
+}
+
+function makeUserController(props: $Shape<IUserController> = {}): IUserController {
+	return downcast(Object.assign(props, {
+		user: createUser({
+			_id: "user-id",
+			alarmInfoList: createUserAlarmInfoListType({alarms: "alarms"})
+		})
+	}))
 }
 
 function cloneEventWithNewTime(event: CalendarEvent, startTime: Date, endTime: Date): CalendarEvent {
@@ -753,3 +840,19 @@ function createEvent(startTime: Date, endTime: Date): CalendarEvent {
 	event._id = ["listId", generateEventElementId(event.startTime.getTime())]
 	return event
 }
+
+class WorkerMock extends EntityRestClientMock {
+	eventByUid: Map<string, CalendarEvent> = new Map();
+
+	updateCalendarEvent = o.spy(() => Promise.resolve())
+
+	getEventByUid(loadUid) {
+		return Promise.resolve(this.eventByUid.get(loadUid))
+	}
+}
+
+var obj2 = {
+	internal: {
+		a: null
+	}
+};
