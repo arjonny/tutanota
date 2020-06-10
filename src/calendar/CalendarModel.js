@@ -1,6 +1,7 @@
 //@flow
 import type {CalendarMonthTimeRange} from "./CalendarUtils"
 import {
+	assignEventId,
 	getAllDayDateForTimezone,
 	getAllDayDateUTCFromZone,
 	getDiffInDays,
@@ -14,7 +15,7 @@ import {
 import {isToday} from "../api/common/utils/DateUtils"
 import {getFromMap} from "../api/common/utils/MapUtils"
 import type {DeferredObject} from "../api/common/utils/Utils"
-import {clone, defer, downcast, neverNull} from "../api/common/utils/Utils"
+import {assertNotNull, clone, defer, downcast} from "../api/common/utils/Utils"
 import type {AlarmIntervalEnum, EndTypeEnum, RepeatPeriodEnum} from "../api/common/TutanotaConstants"
 import {AlarmInterval, CalendarMethod, EndType, FeatureType, GroupType, OperationType, RepeatPeriod} from "../api/common/TutanotaConstants"
 import {DateTime, FixedOffsetZone, IANAZone} from "luxon"
@@ -24,7 +25,7 @@ import type {EntityUpdateData} from "../api/main/EventController"
 import {EventController, isUpdateForTypeRef} from "../api/main/EventController"
 import {worker, WorkerClient} from "../api/main/WorkerClient"
 import {locator} from "../api/main/MainLocator"
-import {elementIdPart, getElementId, HttpMethod, isSameId, listIdPart} from "../api/common/EntityFunctions"
+import {_loadEntity, elementIdPart, getElementId, HttpMethod, isSameId, listIdPart} from "../api/common/EntityFunctions"
 import {erase, load, loadAll, loadMultipleList, serviceRequestVoid} from "../api/main/Entity"
 import type {UserAlarmInfo} from "../api/entities/sys/UserAlarmInfo"
 import {UserAlarmInfoTypeRef} from "../api/entities/sys/UserAlarmInfo"
@@ -40,6 +41,7 @@ import {insertIntoSortedArray} from "../api/common/utils/ArrayUtils"
 import m from "mithril"
 import type {User} from "../api/entities/sys/User"
 import {UserTypeRef} from "../api/entities/sys/User"
+import type {CalendarGroupRoot} from "../api/entities/tutanota/CalendarGroupRoot"
 import {CalendarGroupRootTypeRef} from "../api/entities/tutanota/CalendarGroupRoot"
 import {GroupInfoTypeRef} from "../api/entities/sys/GroupInfo"
 import type {CalendarInfo} from "./CalendarView"
@@ -55,6 +57,7 @@ import {SysService} from "../api/entities/sys/Services"
 import {GroupTypeRef} from "../api/entities/sys/Group"
 import type {AlarmInfo} from "../api/entities/sys/AlarmInfo"
 import type {IUserController} from "../api/main/UserController"
+import type {CalendarRepeatRule} from "../api/entities/tutanota/CalendarRepeatRule"
 
 
 function eventComparator(l: CalendarEvent, r: CalendarEvent): number {
@@ -331,10 +334,12 @@ export function loadCalendarInfos(): Promise<Map<Id, CalendarInfo>> {
 
 // Complete as needed
 export interface CalendarModel {
-	createEvent(event: CalendarEvent, alarmInfos: Array<AlarmInfo>, oldEvent: ?CalendarEvent): Promise<void>;
+	createEvent(event: CalendarEvent, alarmInfos: Array<AlarmInfo>, zone: string, groupRoot: CalendarGroupRoot): Promise<void>;
 
 	/** Update existing event when time did not change */
-	updateEvent(newEvent: CalendarEvent, newAlarms: Array<AlarmInfo>, existingEvent: CalendarEvent): Promise<void>;
+	updateEvent(newEvent: CalendarEvent, newAlarms: Array<AlarmInfo>, zone: string, groupRoot: CalendarGroupRoot,
+	            existingEvent: CalendarEvent
+	): Promise<void>;
 
 	deleteEvent(event: CalendarEvent): Promise<void>;
 
@@ -363,13 +368,81 @@ export class CalendarModelImpl implements CalendarModel {
 	}
 
 	/** Create new event or re-create existing one when significant parts (like start time) have changed */
-	createEvent(event: CalendarEvent, alarmInfos: Array<AlarmInfo>, oldEvent: ?CalendarEvent): Promise<void> {
-		return this._worker.createCalendarEvent(event, alarmInfos, oldEvent)
+	createEvent(event: CalendarEvent, alarmInfos: Array<AlarmInfo>, zone: string, groupRoot: CalendarGroupRoot): Promise<void> {
+		return this._doCreate(event, zone, groupRoot, alarmInfos)
 	}
 
 	/** Update existing event when time did not change */
-	updateEvent(newEvent: CalendarEvent, newAlarms: Array<AlarmInfo>, existingEvent: CalendarEvent): Promise<void> {
-		return this._worker.updateCalendarEvent(newEvent, newAlarms, existingEvent)
+	updateEvent(newEvent: CalendarEvent, newAlarms: Array<AlarmInfo>, zone: string, groupRoot: CalendarGroupRoot,
+	            existingEvent: CalendarEvent
+	): Promise<void> {
+		if (existingEvent == null
+			|| existingEvent._ownerGroup !== groupRoot._id // event has been moved to another calendar
+			|| newEvent.startTime.getTime() !== existingEvent.startTime.getTime()
+			|| !repeatRulesEqual(newEvent.repeatRule, existingEvent.repeatRule)
+		) {
+			return this._doCreate(newEvent, zone, groupRoot, newAlarms, existingEvent)
+		} else {
+			newEvent._ownerGroup = groupRoot._id
+			return this._worker.updateCalendarEvent(newEvent, newAlarms, existingEvent)
+		}
+	}
+
+	loadCalendarInfos(): Promise<Map<Id, CalendarInfo>> {
+		const userId = logins.getUserController().user._id
+		return load(UserTypeRef, userId)
+			.then(user => {
+				const calendarMemberships = user.memberships.filter(m => m.groupType === GroupType.Calendar);
+				const notFoundMemberships = []
+				return Promise
+					.map(calendarMemberships, (membership) => Promise
+						.all([
+							load(CalendarGroupRootTypeRef, membership.group),
+							load(GroupInfoTypeRef, membership.groupInfo),
+							load(GroupTypeRef, membership.group)
+						])
+						.catch(NotFoundError, () => {
+							notFoundMemberships.push(membership)
+							return null
+						})
+					)
+					.then((groupInstances) => {
+						const calendarInfos: Map<Id, CalendarInfo> = new Map()
+						groupInstances.filter(Boolean)
+						              .forEach(([groupRoot, groupInfo, group]) => {
+							              calendarInfos.set(groupRoot._id, {
+								              groupRoot,
+								              groupInfo,
+								              shortEvents: [],
+								              longEvents: new LazyLoaded(() => loadAll(CalendarEventTypeRef, groupRoot.longEvents), []),
+								              group: group,
+								              shared: !isSameId(group.user, userId)
+							              })
+						              })
+
+						// cleanup inconsistent memberships
+						Promise.each(notFoundMemberships, (notFoundMembership) => {
+							const data = createMembershipRemoveData({user: userId, group: notFoundMembership.group})
+							return serviceRequestVoid(SysService.MembershipService, HttpMethod.DELETE, data)
+						})
+						return calendarInfos
+					})
+			})
+	}
+
+	_doCreate(event: CalendarEvent, zone: string, groupRoot: CalendarGroupRoot, alarmInfos: Array<AlarmInfo>,
+	          existingEvent: ?CalendarEvent
+	): Promise<void> {
+		// if values of the existing events have changed that influence the alarm time then delete the old event and create a new
+		// one.
+		assignEventId(event, zone, groupRoot)
+		// Reset ownerEncSessionKey because it cannot be set for new entity, it will be assigned by the CryptoFacade
+		event._ownerEncSessionKey = null
+		// Reset permissions because server will assign them
+		downcast(event)._permissions = null
+		event._ownerGroup = groupRoot._id
+
+		return this._worker.createCalendarEvent(event, alarmInfos, existingEvent)
 	}
 
 	deleteEvent(event: CalendarEvent): Promise<void> {
@@ -379,7 +452,7 @@ export class CalendarModelImpl implements CalendarModel {
 	_processCalendarReplies() {
 		// TOOD: inject mailModel
 		return locator.mailModel.getUserMailboxDetails().then((mailboxDetails) => {
-			loadAll(CalendarEventUpdateTypeRef, neverNull(mailboxDetails.mailboxGroupRoot.calendarEventUpdates).list)
+			loadAll(CalendarEventUpdateTypeRef, assertNotNull(mailboxDetails.mailboxGroupRoot.calendarEventUpdates).list)
 				.then((invites) => {
 					return Promise.each(invites, (invite) => {
 						return this._handleCalendarEventUpdate(invite)
@@ -432,11 +505,14 @@ export class CalendarModelImpl implements CalendarModel {
 				}
 				dbAttendee.status = replyAttendee.status
 				console.log("updating event with reply status", updatedEvent.uid, updatedEvent._id)
-				return this.loadAlarms(dbEvent.alarmInfos, this._userController.user)
-				           .then((alarms) => {
-					           const alarmInfos = alarms.map((a) => a.alarmInfo)
-					           return this._worker.updateCalendarEvent(updatedEvent, alarmInfos, dbEvent)
-				           })
+
+				return Promise.all([
+					this.loadAlarms(dbEvent.alarmInfos, this._userController.user),
+					_loadEntity(CalendarGroupRootTypeRef, assertNotNull(dbEvent._ownerGroup), null, this._worker)
+				]).then(([alarms, groupRoot]) => {
+					const alarmInfos = alarms.map((a) => a.alarmInfo)
+					return this.updateEvent(updatedEvent, alarmInfos, "", groupRoot, dbEvent)
+				})
 			})
 		} else if (calendarData.method === CalendarMethod.REQUEST) { // Either initial invite or update
 			return this._worker.getEventByUid(uid).then((dbEvent) => {
@@ -446,8 +522,8 @@ export class CalendarModelImpl implements CalendarModel {
 						console.log("REQUEST sent not by organizer, ignoring")
 						return
 					}
-					// TODO: check alarms, should we create a new event in some cases?
 					const newEvent = clone(dbEvent)
+					newEvent.startTime = event.startTime
 					newEvent.attendees = event.attendees
 					newEvent.summary = event.summary
 					newEvent.sequence = event.sequence
@@ -455,11 +531,16 @@ export class CalendarModelImpl implements CalendarModel {
 					newEvent.description = event.description
 					newEvent.endTime = event.endTime
 					newEvent.organizer = event.organizer
-					// TODO: handle time/repeat rule changes
-					// newEvent.repeatRule = event.repeatRule
+					newEvent.repeatRule = event.repeatRule
 
 					console.log("Updating event", dbEvent.uid, dbEvent._id)
-					return this._worker.updateCalendarEvent(newEvent, [], dbEvent)
+					return Promise.all([
+						this.loadAlarms(dbEvent.alarmInfos, this._userController.user),
+						_loadEntity(CalendarGroupRootTypeRef, assertNotNull(dbEvent._ownerGroup), null, this._worker)
+					]).then(([alarms, groupRoot]) => {
+						const alarmInfos = alarms.map((a) => a.alarmInfo)
+						return this.updateEvent(newEvent, alarmInfos, "", groupRoot, dbEvent)
+					})
 				}
 			})
 		} else if (calendarData.method === CalendarMethod.CANCEL) {
@@ -523,7 +604,7 @@ export class CalendarModelImpl implements CalendarModel {
 
 	loadAlarms(alarmInfos: Array<IdTuple>, user: User): Promise<Array<UserAlarmInfo>> {
 		const ids = alarmInfos
-			.filter((alarmInfoId) => isSameId(listIdPart(alarmInfoId), neverNull(user.alarmInfoList).alarms))
+			.filter((alarmInfoId) => isSameId(listIdPart(alarmInfoId), assertNotNull(user.alarmInfoList).alarms))
 		if (ids.length === 0) {
 			return Promise.resolve([])
 		}
@@ -609,4 +690,20 @@ export const calendarModel = new CalendarModelImpl(new Notifications(), locator.
 
 if (replaced) {
 	Object.assign(calendarModel, replaced.calendarModel)
+}
+
+// allDay event consists of full UTC days. It always starts at 00:00:00.00 of its start day in UTC and ends at
+// 0 of the next day in UTC. Full day event time is relative to the local timezone. So startTime and endTime of
+// allDay event just points us to the correct date.
+// e.g. there's an allDay event in Europe/Berlin at 2nd of may. We encode it as:
+// {startTime: new Date(Date.UTC(2019, 04, 2, 0, 0, 0, 0)), {endTime: new Date(Date.UTC(2019, 04, 3, 0, 0, 0, 0))}}
+// We check the condition with time == 0 and take a UTC date (which is [2-3) so full day on the 2nd of May). We
+function repeatRulesEqual(repeatRule: ?CalendarRepeatRule, repeatRule2: ?CalendarRepeatRule): boolean {
+	return (repeatRule == null && repeatRule2 == null) ||
+		(repeatRule != null && repeatRule2 != null &&
+			repeatRule.endType === repeatRule2.endType &&
+			repeatRule.endValue === repeatRule2.endValue &&
+			repeatRule.frequency === repeatRule2.frequency &&
+			repeatRule.interval === repeatRule2.interval &&
+			repeatRule.timeZone === repeatRule2.timeZone)
 }

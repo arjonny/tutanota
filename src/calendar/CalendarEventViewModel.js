@@ -19,7 +19,6 @@ import type {MailboxDetail} from "../mail/MailModel"
 import stream from "mithril/stream/stream.js"
 import {getDefaultSenderFromUser, getEnabledMailAddressesWithUser} from "../mail/MailUtils"
 import {
-	assignEventId,
 	createRepeatRuleWithValues,
 	filterInt,
 	generateUid,
@@ -45,7 +44,6 @@ import type {EncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailA
 import {createEncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
 import {findAndRemove, firstThrow} from "../api/common/utils/ArrayUtils"
 import {NotFoundError} from "../api/common/error/RestError"
-import type {CalendarRepeatRule} from "../api/entities/tutanota/CalendarRepeatRule"
 import type {User} from "../api/entities/sys/User"
 import {incrementDate} from "../api/common/utils/DateUtils"
 import type {CalendarUpdateDistributor} from "./CalendarUpdateDistributor"
@@ -433,7 +431,6 @@ export class CalendarEventViewModel {
 		newEvent.location = this.location()
 		newEvent.endTime = endDate
 		const groupRoot = this.selectedCalendar().groupRoot
-		newEvent._ownerGroup = this.selectedCalendar().groupRoot._id
 		newEvent.uid = this.existingEvent && this.existingEvent.uid ? this.existingEvent.uid : generateUid(newEvent, Date.now())
 		const repeat = this.repeat
 		if (repeat == null) {
@@ -517,25 +514,10 @@ export class CalendarEventViewModel {
 		}
 
 		const doCreateEvent = () => {
-			if (existingEvent == null
-				|| existingEvent._ownerGroup !== newEvent._ownerGroup // event has been moved to another calendar
-				|| newEvent.startTime.getTime() !== existingEvent.startTime.getTime()
-				|| !repeatRulesEqual(newEvent.repeatRule, existingEvent.repeatRule)
-			) {
-				// if values of the existing events have changed that influence the alarm time then delete the old event and create a new
-				// one.
-				assignEventId(newEvent, this._zone, groupRoot)
-				// Reset ownerEncSessionKey because it cannot be set for new entity, it will be assigned by the CryptoFacade
-				newEvent._ownerEncSessionKey = null
-				// Reset permissions because server will assign them
-				downcast(newEvent)._permissions = null
-
-				// We don't want to pass event from ics file to the facade because it's just a template event and there's nothing to clean
-				// up.
-				const oldEventToPass = existingEvent && existingEvent._ownerGroup ? existingEvent : null
-				return this._calendarModel.createEvent(newEvent, newAlarms, oldEventToPass)
+			if (existingEvent == null) {
+				return this._calendarModel.createEvent(newEvent, newAlarms, this._zone, groupRoot)
 			} else {
-				return this._calendarModel.updateEvent(newEvent, newAlarms, existingEvent)
+				return this._calendarModel.updateEvent(newEvent, newAlarms, this._zone, groupRoot, existingEvent)
 			}
 		}
 
@@ -600,20 +582,4 @@ function createCalendarAlarm(identifier: string, trigger: string): AlarmInfo {
 	calendarAlarmInfo.alarmIdentifier = identifier
 	calendarAlarmInfo.trigger = trigger
 	return calendarAlarmInfo
-}
-
-// allDay event consists of full UTC days. It always starts at 00:00:00.00 of its start day in UTC and ends at
-// 0 of the next day in UTC. Full day event time is relative to the local timezone. So startTime and endTime of
-// allDay event just points us to the correct date.
-// e.g. there's an allDay event in Europe/Berlin at 2nd of may. We encode it as:
-// {startTime: new Date(Date.UTC(2019, 04, 2, 0, 0, 0, 0)), {endTime: new Date(Date.UTC(2019, 04, 3, 0, 0, 0, 0))}}
-// We check the condition with time == 0 and take a UTC date (which is [2-3) so full day on the 2nd of May). We
-function repeatRulesEqual(repeatRule: ?CalendarRepeatRule, repeatRule2: ?CalendarRepeatRule): boolean {
-	return (repeatRule == null && repeatRule2 == null) ||
-		(repeatRule != null && repeatRule2 != null &&
-			repeatRule.endType === repeatRule2.endType &&
-			repeatRule.endValue === repeatRule2.endValue &&
-			repeatRule.frequency === repeatRule2.frequency &&
-			repeatRule.interval === repeatRule2.interval &&
-			repeatRule.timeZone === repeatRule2.timeZone)
 }

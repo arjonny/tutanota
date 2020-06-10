@@ -61,7 +61,7 @@ export class EntityRestClientMock extends EntityRestClient {
 			if (!this._listEntities[listId]) {
 				throw new NotFoundError("list not set")
 			}
-			return this._handleMockElement(this._listEntities[listId][elementId])
+			return this._handleMockElement(this._listEntities[listId][elementId], [listId, elementId])
 		} catch (e) {
 			if (e instanceof NotFoundError) {
 				if (throwOnNotFound) {
@@ -91,9 +91,9 @@ export class EntityRestClientMock extends EntityRestClient {
 					} else {
 						filteredIds = Object.keys(entriesForListId).sort(compareOldestFirst).filter((id) => firstBiggerThanSecond(id, startId))
 					}
-					return filteredIds.map((id) => this._handleMockElement(entriesForListId[id]))
+					return filteredIds.map((id) => this._handleMockElement(entriesForListId[id], id))
 				} else if (id) {// element instance request
-					return this._handleMockElement(this._entities[id])
+					return this._handleMockElement(this._entities[id], id)
 				} else if (idsParamter) {
 					const ids = idsParamter.split(",")
 					const lid = listId
@@ -104,7 +104,7 @@ export class EntityRestClientMock extends EntityRestClient {
 					} else {
 						return ids.map(id => {
 							try {
-								return this._handleMockElement(this._entities[id])
+								return this._handleMockElement(this._entities[id], id)
 							} catch (e) {
 								if (e instanceof NotFoundError) {
 									return null
@@ -123,13 +123,13 @@ export class EntityRestClientMock extends EntityRestClient {
 		})
 	}
 
-	_handleMockElement(element: ?Object): Object {
+	_handleMockElement(element: ?Object, id: Id | IdTuple): Object {
 		if (element instanceof Error) {
 			throw element
 		} else if (element != null) {
 			return element
 		} else {
-			throw new NotFoundError("element with does not exists")
+			throw new NotFoundError(`element with id ${id.toString()} does not exists`)
 		}
 	}
 }

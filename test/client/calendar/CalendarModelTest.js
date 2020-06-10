@@ -30,6 +30,8 @@ import type {IUserController} from "../../../src/api/main/UserController"
 import {createUser} from "../../../src/api/entities/sys/User"
 import {createUserAlarmInfoListType} from "../../../src/api/entities/sys/UserAlarmInfoListType"
 import {createUserAlarmInfo} from "../../../src/api/entities/sys/UserAlarmInfo"
+import type {CalendarGroupRoot} from "../../../src/api/entities/tutanota/CalendarGroupRoot"
+import {createCalendarGroupRoot} from "../../../src/api/entities/tutanota/CalendarGroupRoot"
 
 o.spec("CalendarModel", function () {
 	o.spec("addDaysForEvent", function () {
@@ -692,6 +694,16 @@ o.spec("CalendarModel", function () {
 	})
 
 	o.spec("calendar event updates", function () {
+		let workerMock: WorkerMock
+		let groupRoot: CalendarGroupRoot
+		o.beforeEach(function () {
+			groupRoot = createCalendarGroupRoot({
+				_id: "groupRootId"
+			})
+			workerMock = new WorkerMock()
+			workerMock.addElementInstances(groupRoot)
+		})
+
 		o("reply but sender is not a guest", async function () {
 			const {eventController} = makeEventController()
 			const uid = "uid"
@@ -718,7 +730,7 @@ o.spec("CalendarModel", function () {
 			o(workerClient.updateCalendarEvent.calls.length).equals(0)
 		})
 
-		o.only("reply", async function () {
+		o("reply", async function () {
 			const {eventController} = makeEventController()
 			const uid = "uid"
 			const sender = "sender@example.com"
@@ -728,6 +740,7 @@ o.spec("CalendarModel", function () {
 			const alarmsListId = neverNull(userController.user.alarmInfoList).alarms
 			const existingEvent = createCalendarEvent({
 				uid,
+				_ownerGroup: groupRoot._id,
 				summary: "v1",
 				attendees: [
 					createCalendarEventAttendee({
@@ -741,7 +754,6 @@ o.spec("CalendarModel", function () {
 				],
 				alarmInfos: [[alarmsListId, alarm._id]]
 			})
-			const workerMock = new WorkerMock()
 			workerMock.addListInstances(createUserAlarmInfo({
 				_id: [alarmsListId, alarm._id],
 				alarmInfo: alarm,
@@ -772,7 +784,7 @@ o.spec("CalendarModel", function () {
 					}
 				]
 			})
-			const [createdEvent, alarms, oldEvent] = workerClient.updateCalendarEvent.calls[0].args
+			const [createdEvent, alarms] = workerClient.updateCalendarEvent.calls[0].args
 			o(createdEvent.uid).equals(existingEvent.uid)
 			o(createdEvent.summary).equals(existingEvent.summary)
 			o(createdEvent.attendees).deepEquals([
@@ -786,6 +798,131 @@ o.spec("CalendarModel", function () {
 				}),
 			])
 			o(alarms).deepEquals([alarm])
+		})
+
+		o("request as a new invite", async function () {
+			const {eventController} = makeEventController()
+			const uid = "uid"
+			const sender = "sender@example.com"
+			const alarm = createAlarmInfo({_id: "alarm-id"})
+			const userController = makeUserController()
+			const alarmsListId = neverNull(userController.user.alarmInfoList).alarms
+			const workerMock = new WorkerMock()
+			const workerClient = makeWorkerClient(workerMock)
+			const model = new CalendarModelImpl(makeNotifications(), eventController, workerClient, userController)
+
+			await model.processCalendarUpdate(sender, {
+				summary: "1",
+				method: CalendarMethod.REQUEST,
+				contents: [
+					{
+						event: createCalendarEvent({
+							uid,
+							attendees: [
+								createCalendarEventAttendee({
+									address: createEncryptedMailAddress({address: sender}),
+									status: CalendarAttendeeStatus.ACCEPTED,
+								}),
+							]
+						}),
+						alarms: [],
+					}
+				]
+			})
+			// It'a a new invite, we don't do anything with them yet
+			o(workerClient.updateCalendarEvent.calls).deepEquals([])
+		})
+
+		o("request as an update", async function () {
+			const {eventController} = makeEventController()
+			const uid = "uid"
+			const sender = "sender@example.com"
+			const alarm = createAlarmInfo({_id: "alarm-id"})
+			const userController = makeUserController()
+			const alarmsListId = neverNull(userController.user.alarmInfoList).alarms
+			workerMock.addListInstances(createUserAlarmInfo({
+				_id: [alarmsListId, alarm._id],
+				alarmInfo: alarm,
+			}))
+			const existingEvent = createCalendarEvent({
+				_ownerGroup: groupRoot._id,
+				summary: "v1",
+				sequence: "1",
+				uid,
+				organizer: sender,
+				alarmInfos: [[alarmsListId, alarm._id]]
+			})
+			workerMock.eventByUid.set(uid, existingEvent)
+
+			const workerClient = makeWorkerClient(workerMock)
+			const model = new CalendarModelImpl(makeNotifications(), eventController, workerClient, userController)
+
+			const sentEvent = createCalendarEvent({
+				summary: "v2",
+				uid,
+				sequence: "2",
+				organizer: sender,
+			})
+			await model.processCalendarUpdate(sender, {
+				method: CalendarMethod.REQUEST,
+				contents: [
+					{event: sentEvent, alarms: []}
+				]
+			})
+			const [updatedEvent, updatedAlarms, oldEvent] = workerClient.updateCalendarEvent.calls[0].args
+			o(updatedEvent.summary).equals(sentEvent.summary)
+			o(updatedEvent.sequence).equals(sentEvent.sequence)
+			o(updatedAlarms).deepEquals([alarm])
+			o(oldEvent).deepEquals(existingEvent)
+		})
+
+		o("event is re-created when the start time changes", async function () {
+			const {eventController} = makeEventController()
+			const uid = "uid"
+			const sender = "sender@example.com"
+			const alarm = createAlarmInfo({_id: "alarm-id"})
+			const userController = makeUserController()
+			const alarmsListId = neverNull(userController.user.alarmInfoList).alarms
+			workerMock.addListInstances(createUserAlarmInfo({
+				_id: [alarmsListId, alarm._id],
+				alarmInfo: alarm,
+			}))
+			const existingEvent = createCalendarEvent({
+				_id: ["listId", "eventId"],
+				_ownerGroup: groupRoot._id,
+				summary: "v1",
+				sequence: "1",
+				uid,
+				organizer: sender,
+				startTime: DateTime.fromObject({year: 2020, month: 5, day: 10, zone: "UTC"}).toJSDate(),
+				alarmInfos: [[alarmsListId, alarm._id]]
+			})
+			workerMock.eventByUid.set(uid, existingEvent)
+
+			const workerClient = makeWorkerClient(workerMock)
+			const model = new CalendarModelImpl(makeNotifications(), eventController, workerClient, userController)
+
+			const sentEvent = createCalendarEvent({
+				summary: "v2",
+				uid,
+				sequence: "2",
+				startTime: DateTime.fromObject({year: 2020, month: 5, day: 11, zone: "UTC"}).toJSDate(),
+				organizer: sender,
+			})
+			await model.processCalendarUpdate(sender, {
+				method: CalendarMethod.REQUEST,
+				contents: [
+					{event: sentEvent, alarms: []}
+				]
+			})
+			o(workerClient.updateCalendarEvent.calls).deepEquals([])
+			const [updatedEvent, updatedAlarms, oldEvent] = workerClient.createCalendarEvent.calls[0].args
+			o(updatedEvent.summary).equals(sentEvent.summary)
+			o(updatedEvent.sequence).equals(sentEvent.sequence)
+			o(updatedEvent.startTime.toISOString()).equals(sentEvent.startTime.toISOString())
+			o(updatedEvent.uid).equals(uid)
+			o(updatedAlarms).deepEquals([alarm])
+			o(oldEvent).deepEquals(existingEvent)
 		})
 	})
 })
@@ -809,12 +946,8 @@ function makeEventController(): {eventController: EventController, sendEvent: (E
 	}
 }
 
-function makeWorkerClient<T: $Shape<WorkerClient>>(props: T): WorkerClient {
+function makeWorkerClient(props: {}): WorkerClient {
 	return downcast(props)
-}
-
-const t: $Shape<WorkerClient> = {
-	extra: "ha"
 }
 
 function makeUserController(props: $Shape<IUserController> = {}): IUserController {
@@ -844,6 +977,7 @@ function createEvent(startTime: Date, endTime: Date): CalendarEvent {
 class WorkerMock extends EntityRestClientMock {
 	eventByUid: Map<string, CalendarEvent> = new Map();
 
+	createCalendarEvent = o.spy(() => Promise.resolve())
 	updateCalendarEvent = o.spy(() => Promise.resolve())
 
 	getEventByUid(loadUid) {

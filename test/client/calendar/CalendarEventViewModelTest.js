@@ -333,7 +333,7 @@ o.spec("CalendarEventViewModel", function () {
 			const askForUpdates = assertAskedForUpdates(result)
 			o(distributor.sendUpdate.calls).deepEquals([])
 			await askForUpdates(true)
-			o(calendarModel.createEvent.calls.length).equals(1)("created event")
+			o(calendarModel.updateEvent.calls.length).equals(1)("created event")
 			o(distributor.sendUpdate.calls[0].args[1]).deepEquals([createEncryptedMailAddress({address: guest})])
 			o(distributor.sendCancellation.calls).deepEquals([])
 		})
@@ -369,7 +369,7 @@ o.spec("CalendarEventViewModel", function () {
 			o(distributor.sendUpdate.calls).deepEquals([])
 			await askForUpdates(true)
 
-			o(calendarModel.createEvent.calls.length).equals(1)("created event")
+			o(calendarModel.updateEvent.calls.length).equals(1)("created event")
 			o(distributor.sendUpdate.calls[0].args[1]).deepEquals([createEncryptedMailAddress({address: oldGuest})])("update")
 			o(distributor.sendInvite.calls[0].args[1]).deepEquals([createEncryptedMailAddress({address: newGuest})])("invite")
 			o(distributor.sendCancellation.calls[0].args[1]).deepEquals([toRemoveAttendee.address])("cancel")
@@ -406,7 +406,7 @@ o.spec("CalendarEventViewModel", function () {
 			o(distributor.sendUpdate.calls).deepEquals([])
 			await askForUpdates(false)
 
-			o(calendarModel.createEvent.calls.length).equals(1)("created event")
+			o(calendarModel.updateEvent.calls.length).equals(1)("created event")
 			o(distributor.sendUpdate.calls).deepEquals([])
 			o(distributor.sendInvite.calls).deepEquals([])
 			o(distributor.sendCancellation.calls).deepEquals([])
@@ -437,7 +437,7 @@ o.spec("CalendarEventViewModel", function () {
 			o(distributor.sendUpdate.calls).deepEquals([])
 			await askForUpdates(true)
 
-			o(calendarModel.createEvent.calls.length).equals(1)("created event")
+			o(calendarModel.updateEvent.calls.length).equals(1)("created event")
 			o(distributor.sendCancellation.calls[0].args[1]).deepEquals([toRemoveAttendee.address])
 		})
 
@@ -465,7 +465,7 @@ o.spec("CalendarEventViewModel", function () {
 			const result = await viewModel.onOkPressed()
 
 			o(result).deepEquals({status: "ok", askForUpdates: null})
-			const [createdEvent] = calendarModel.createEvent.calls[0].args
+			const [createdEvent] = calendarModel.updateEvent.calls[0].args
 			o(createdEvent.attendees.length).equals(2)
 			o(createdEvent.attendees.find(a =>
 				a.address.address === ownAttendee.address.address).status).equals(CalendarAttendeeStatus.ACCEPTED)
@@ -489,7 +489,7 @@ o.spec("CalendarEventViewModel", function () {
 			const viewModel = init({calendars, existingEvent, calendarModel})
 			const result = await viewModel.onOkPressed()
 			o(result).deepEquals({status: "ok", askForUpdates: null})
-			const [createdEvent] = calendarModel.createEvent.calls[0].args
+			const [createdEvent] = calendarModel.updateEvent.calls[0].args
 			o(createdEvent.startTime.toISOString()).deepEquals(startTime.toISOString())
 			o(createdEvent.endTime.toISOString()).deepEquals(endTime.toISOString())
 		})
