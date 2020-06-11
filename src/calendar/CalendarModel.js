@@ -25,7 +25,7 @@ import type {EntityUpdateData} from "../api/main/EventController"
 import {EventController, isUpdateForTypeRef} from "../api/main/EventController"
 import {worker, WorkerClient} from "../api/main/WorkerClient"
 import {locator} from "../api/main/MainLocator"
-import {_loadEntity, elementIdPart, getElementId, HttpMethod, isSameId, listIdPart} from "../api/common/EntityFunctions"
+import {_eraseEntity, _loadEntity, elementIdPart, getElementId, HttpMethod, isSameId, listIdPart} from "../api/common/EntityFunctions"
 import {erase, load, loadAll, loadMultipleList, serviceRequestVoid} from "../api/main/Entity"
 import type {UserAlarmInfo} from "../api/entities/sys/UserAlarmInfo"
 import {UserAlarmInfoTypeRef} from "../api/entities/sys/UserAlarmInfo"
@@ -551,7 +551,7 @@ export class CalendarModelImpl implements CalendarModel {
 						return
 					}
 					console.log("Deleting cancelled event", uid, dbEvent._id)
-					return erase(dbEvent)
+					return _eraseEntity(dbEvent, this._worker)
 				}
 			})
 		}

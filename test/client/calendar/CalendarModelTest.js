@@ -1,11 +1,11 @@
 //@flow
 import o from "ospec/ospec.js"
 import type {CalendarEvent} from "../../../src/api/entities/tutanota/CalendarEvent"
-import {createCalendarEvent} from "../../../src/api/entities/tutanota/CalendarEvent"
+import {CalendarEventTypeRef, createCalendarEvent} from "../../../src/api/entities/tutanota/CalendarEvent"
 import {createRepeatRuleWithValues, getAllDayDateUTCFromZone, getMonth, getTimeZone} from "../../../src/calendar/CalendarUtils"
 import {getStartOfDay} from "../../../src/api/common/utils/DateUtils"
 import {clone, downcast, neverNull, noOp} from "../../../src/api/common/utils/Utils"
-import {mapToObject} from "../../api/TestUtils"
+import {asResult, mapToObject} from "../../api/TestUtils"
 import type {CalendarModel} from "../../../src/calendar/CalendarModel"
 import {
 	addDaysForEvent,
@@ -32,6 +32,8 @@ import {createUserAlarmInfoListType} from "../../../src/api/entities/sys/UserAla
 import {createUserAlarmInfo} from "../../../src/api/entities/sys/UserAlarmInfo"
 import type {CalendarGroupRoot} from "../../../src/api/entities/tutanota/CalendarGroupRoot"
 import {createCalendarGroupRoot} from "../../../src/api/entities/tutanota/CalendarGroupRoot"
+import {_loadEntity} from "../../../src/api/common/EntityFunctions"
+import {NotFoundError} from "../../../src/api/common/error/RestError"
 
 o.spec("CalendarModel", function () {
 	o.spec("addDaysForEvent", function () {
@@ -696,6 +698,9 @@ o.spec("CalendarModel", function () {
 	o.spec("calendar event updates", function () {
 		let workerMock: WorkerMock
 		let groupRoot: CalendarGroupRoot
+		const userController = makeUserController()
+		const alarmsListId = neverNull(userController.user.alarmInfoList).alarms
+
 		o.beforeEach(function () {
 			groupRoot = createCalendarGroupRoot({
 				_id: "groupRootId"
@@ -736,8 +741,6 @@ o.spec("CalendarModel", function () {
 			const sender = "sender@example.com"
 			const anotherGuest = "another-attendee"
 			const alarm = createAlarmInfo({_id: "alarm-id"})
-			const userController = makeUserController()
-			const alarmsListId = neverNull(userController.user.alarmInfoList).alarms
 			const existingEvent = createCalendarEvent({
 				uid,
 				_ownerGroup: groupRoot._id,
@@ -804,9 +807,6 @@ o.spec("CalendarModel", function () {
 			const {eventController} = makeEventController()
 			const uid = "uid"
 			const sender = "sender@example.com"
-			const alarm = createAlarmInfo({_id: "alarm-id"})
-			const userController = makeUserController()
-			const alarmsListId = neverNull(userController.user.alarmInfoList).alarms
 			const workerMock = new WorkerMock()
 			const workerClient = makeWorkerClient(workerMock)
 			const model = new CalendarModelImpl(makeNotifications(), eventController, workerClient, userController)
@@ -838,8 +838,6 @@ o.spec("CalendarModel", function () {
 			const uid = "uid"
 			const sender = "sender@example.com"
 			const alarm = createAlarmInfo({_id: "alarm-id"})
-			const userController = makeUserController()
-			const alarmsListId = neverNull(userController.user.alarmInfoList).alarms
 			workerMock.addListInstances(createUserAlarmInfo({
 				_id: [alarmsListId, alarm._id],
 				alarmInfo: alarm,
@@ -881,8 +879,6 @@ o.spec("CalendarModel", function () {
 			const uid = "uid"
 			const sender = "sender@example.com"
 			const alarm = createAlarmInfo({_id: "alarm-id"})
-			const userController = makeUserController()
-			const alarmsListId = neverNull(userController.user.alarmInfoList).alarms
 			workerMock.addListInstances(createUserAlarmInfo({
 				_id: [alarmsListId, alarm._id],
 				alarmInfo: alarm,
@@ -923,6 +919,62 @@ o.spec("CalendarModel", function () {
 			o(updatedEvent.uid).equals(uid)
 			o(updatedAlarms).deepEquals([alarm])
 			o(oldEvent).deepEquals(existingEvent)
+		})
+
+		o.spec("cancel", function () {
+			o("event is cancelled by organizer", async function () {
+				const {eventController} = makeEventController()
+				const uid = "uid"
+				const sender = "sender@example.com"
+				const existingEvent = createCalendarEvent({
+					_id: ["listId", "eventId"],
+					_ownerGroup: groupRoot._id,
+					sequence: "1",
+					uid,
+					organizer: sender,
+				})
+				workerMock.addListInstances(existingEvent)
+				workerMock.eventByUid.set(uid, existingEvent)
+
+				const workerClient = makeWorkerClient(workerMock)
+				const model = new CalendarModelImpl(makeNotifications(), eventController, workerClient, userController)
+
+				const sentEvent = createCalendarEvent({uid, sequence: "2", organizer: sender})
+				await model.processCalendarUpdate(sender, {
+					method: CalendarMethod.CANCEL,
+					contents: [
+						{event: sentEvent, alarms: []}
+					]
+				})
+				o(Object.getPrototypeOf(await asResult(_loadEntity(CalendarEventTypeRef, existingEvent._id, null, workerMock))))
+					.equals(NotFoundError.prototype)("Calendar event was deleted")
+			})
+
+			o("event is cancelled by someone else than organizer", async function () {
+				const {eventController} = makeEventController()
+				const uid = "uid"
+				const sender = "sender@example.com"
+				const existingEvent = createCalendarEvent({
+					_id: ["listId", "eventId"],
+					_ownerGroup: groupRoot._id,
+					sequence: "1",
+					uid,
+					organizer: sender,
+				})
+				workerMock.addListInstances(existingEvent)
+				workerMock.eventByUid.set(uid, existingEvent)
+
+				const workerClient = makeWorkerClient(workerMock)
+				const model = new CalendarModelImpl(makeNotifications(), eventController, workerClient, userController)
+
+				const sentEvent = createCalendarEvent({uid, sequence: "2", organizer: sender})
+				await model.processCalendarUpdate("another-sender", {
+					method: CalendarMethod.CANCEL,
+					contents: [{event: sentEvent, alarms: []}]
+				})
+				o(await _loadEntity(CalendarEventTypeRef, existingEvent._id, null, workerMock))
+					.equals(existingEvent)("Calendar event was not deleted")
+			})
 		})
 	})
 })
