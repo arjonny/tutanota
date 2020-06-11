@@ -35,7 +35,7 @@ import {
 	timeStringFromParts,
 	timeStringInZone
 } from "./CalendarUtils"
-import {clone, downcast, neverNull, noOp} from "../api/common/utils/Utils"
+import {assertNotNull, clone, downcast, neverNull, noOp} from "../api/common/utils/Utils"
 import {generateEventElementId, isAllDayEvent} from "../api/common/utils/CommonCalendarUtils"
 import {CalendarModel, incrementByRepeatPeriod} from "./CalendarModel"
 import m from "mithril"
@@ -57,6 +57,14 @@ export type EventCreateResult =
 	| {status: "ok", askForUpdates: ?((bool) => Promise<void>)}
 	| {status: "error", error: TranslationKeyType}
 
+const EventType = Object.freeze({
+	OWN: "own",
+	SHARED_RO: "shared_ro",
+	SHARED_RW: "shared_rw",
+	INVITE: "invite",
+})
+type EventTypeEnum = $Values<typeof EventType>
+
 export class CalendarEventViewModel {
 	+summary: Stream<string>;
 	+calendars: Array<CalendarInfo>;
@@ -75,13 +83,13 @@ export class CalendarEventViewModel {
 	+amPmFormat: bool;
 	+existingEvent: ?CalendarEvent
 	_oldStartTime: ?string;
-	+readOnly: bool;
+	+readOnly: boolean;
 	+_zone: string;
 	// We keep alarms read-only so that view can diff just array and not all elements
 	alarms: $ReadOnlyArray<AlarmInfo>;
 	going: CalendarAttendeeStatusEnum;
 	_user: User;
-	+_isInSharedCalendar: boolean;
+	+_eventType: EventTypeEnum;
 	+_distributor: CalendarUpdateDistributor;
 	+_calendarModel: CalendarModel;
 	+_mailAddresses: Array<string>
@@ -139,23 +147,28 @@ export class CalendarEventViewModel {
 		 */
 
 
-		this._isInSharedCalendar = false // Default
-
 		if (!existingEvent) {
-			this.readOnly = false
+			this._eventType = EventType.OWN
 		} else {
 			// OwnerGroup is not set for events from file
 			const calendarInfoForEvent = existingEvent._ownerGroup && calendars.get(existingEvent._ownerGroup)
 			if (calendarInfoForEvent) {
-				this._isInSharedCalendar = calendarInfoForEvent.shared
-				this.readOnly = calendarInfoForEvent.shared &&
-					(!hasCapabilityOnGroup(this._user, calendarInfoForEvent.group, ShareCapability.Write) ||
-						this.attendees.length > 0)
+				if (calendarInfoForEvent.shared) {
+					this._eventType = hasCapabilityOnGroup(this._user, calendarInfoForEvent.group, ShareCapability.Write)
+						? EventType.SHARED_RW
+						: EventType.SHARED_RO
+				} else {
+					this._eventType = existingEvent.isCopy ? EventType.INVITE : EventType.OWN
+				}
 			} else {
 				// We can edit new invites (from files)
-				this.readOnly = false
+				this._eventType = EventType.INVITE
 			}
 		}
+
+		this.readOnly = this._eventType !== EventType.OWN
+			&& this._eventType !== EventType.INVITE
+			&& (this._eventType !== EventType.SHARED_RW || assertNotNull(existingEvent).attendees.length !== 0)
 
 		this.possibleOrganizers = existingOrganizer && !this.canModifyOrganizer()
 			? [existingOrganizer]
@@ -349,7 +362,8 @@ export class CalendarEventViewModel {
 	}
 
 	canModifyGuests(): boolean {
-		return !this._isInSharedCalendar && (!this.existingEvent || !this.existingEvent.isCopy)
+		return (this._eventType === EventType.OWN || this._eventType === EventType.INVITE)
+			&& (!this.existingEvent || !this.existingEvent.isCopy)
 	}
 
 	removeAttendee(address: string) {
@@ -357,11 +371,20 @@ export class CalendarEventViewModel {
 	}
 
 	canModifyOwnAttendance(): boolean {
-		return !this._isInSharedCalendar && (this._viewingOwnEvent() || !!this._findOwnAttendee())
+		return (this._eventType === EventType.OWN || this._eventType === EventType.INVITE)
+			&& (this._viewingOwnEvent() || !!this._findOwnAttendee())
 	}
 
 	canModifyOrganizer(): boolean {
-		return !this._isInSharedCalendar && (!this.existingEvent || !this.existingEvent.isCopy) && this.attendees.length === 0
+		return (this._eventType === EventType.OWN || this._eventType === EventType.INVITE)
+			&& (!this.existingEvent || !this.existingEvent.isCopy)
+			&& this.attendees.length === 0
+	}
+
+	canModifyAlarms(): boolean {
+		return this._eventType === EventType.OWN
+			|| this._eventType === EventType.INVITE
+			|| this._eventType === EventType.SHARED_RW
 	}
 
 	_viewingOwnEvent(): boolean {
@@ -371,7 +394,7 @@ export class CalendarEventViewModel {
 				!this.existingEvent.isCopy
 				&& (
 					this.existingEvent.organizer == null ||
-					this.possibleOrganizers.includes(this.existingEvent.organizer)
+					this._mailAddresses.includes(this.existingEvent.organizer)
 				)
 			)
 		)
@@ -382,9 +405,8 @@ export class CalendarEventViewModel {
 	 */
 	deleteEvent(): Promise<bool> {
 		const event = this.existingEvent
-		// TODO: check if it works
 		if (event) {
-			const awaitCancellation = this._viewingOwnEvent() && !this._isInSharedCalendar && event.attendees.length
+			const awaitCancellation = this._eventType === EventType.OWN && event.attendees.length
 				? this._distributor.sendCancellation(event, event.attendees.map(a => a.address))
 				: Promise.resolve()
 			return awaitCancellation.then(() => this._calendarModel.deleteEvent(event)).catch(NotFoundError, noOp)

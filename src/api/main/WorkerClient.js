@@ -1,7 +1,7 @@
 // @flow
 import {CryptoError} from "../common/error/CryptoError"
 import {objToError, Queue, Request} from "../common/WorkerProtocol"
-import {UserController} from "../main/UserController"
+import {UserController} from "./UserController"
 import type {HttpMethodEnum, MediaTypeEnum} from "../common/EntityFunctions"
 import {TypeRef} from "../common/EntityFunctions"
 import {assertMainOrNode, isMain} from "../Env"

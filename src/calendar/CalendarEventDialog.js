@@ -344,9 +344,8 @@ export function showCalendarEventDialog(date: Date, calendars: Map<Id, CalendarI
 					),
 					renderRepeatRulePicker(),
 					m(".flex", [
-						viewModel.readOnly
-							? null
-							: m(".flex.col.flex-half.pr-s",
+						viewModel.canModifyAlarms()
+							? m(".flex.col.flex-half.pr-s",
 							[
 								viewModel.alarms.map((a) => m(DropDownSelectorN, {
 									label: "reminderBeforeEvent_label",
@@ -363,7 +362,8 @@ export function showCalendarEventDialog(date: Date, calendars: Map<Id, CalendarI
 									icon: BootIcons.Expand,
 									selectionChangedHandler: (value) => value && viewModel.addAlarm(value)
 								})
-							]),
+							])
+							: null,
 						renderCalendarPicker(),
 					]),
 					renderLocationField(),

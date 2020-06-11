@@ -9,7 +9,7 @@ import type {CalendarEvent} from "../../../src/api/entities/tutanota/CalendarEve
 import {createCalendarEvent} from "../../../src/api/entities/tutanota/CalendarEvent"
 import {createGroupInfo} from "../../../src/api/entities/sys/GroupInfo"
 import type {ShareCapabilityEnum} from "../../../src/api/common/TutanotaConstants"
-import {CalendarAttendeeStatus, GroupType, ShareCapability, TimeFormat} from "../../../src/api/common/TutanotaConstants"
+import {AlarmInterval, CalendarAttendeeStatus, GroupType, ShareCapability, TimeFormat} from "../../../src/api/common/TutanotaConstants"
 import type {CalendarInfo} from "../../../src/calendar/CalendarView"
 import {createGroupMembership} from "../../../src/api/entities/sys/GroupMembership"
 import type {User} from "../../../src/api/entities/sys/User"
@@ -583,6 +583,29 @@ o.spec("CalendarEventViewModel", function () {
 			const result = await viewModel.onOkPressed()
 			o(result).deepEquals({status: "ok", askForUpdates: null})
 		})
+
+		o("does not ask for updates if alarm is changed in shared calendar", async function () {
+			const calendars = makeCalendars("shared")
+			// TODO: add capability and test without capability
+			const calendarModel = makeCalendarModel()
+			const existingEvent = createCalendarEvent({
+				organizer: "organizer@tutanota.de",
+				startTime: DateTime.utc(2020, 6, 11).toJSDate(),
+				endTime: DateTime.utc(2020, 7, 12).toJSDate(),
+				attendees: [
+					createCalendarEventAttendee({
+						address: createEncryptedMailAddress({address: "guest@tutanota.com"})
+					})
+				]
+			})
+			const viewModel = init({calendarModel, calendars, existingEvent})
+
+			viewModel.addAlarm(AlarmInterval.FIVE_MINUTES)
+			const result = await viewModel.onOkPressed()
+
+			o(result).deepEquals({status: "ok", askForUpdates: null})
+			o(calendarModel.updateEvent.calls.length).equals(1)("Did update event")
+		})
 	})
 
 	o.spec("onStartDateSelected", function () {
@@ -740,14 +763,14 @@ o.spec("CalendarEventViewModel", function () {
 	})
 })
 
-function init({userController, distributor, mailboxDetail, calendars, existingEvent, calendarModel}: {
+function init({userController, distributor, mailboxDetail, calendars, existingEvent, calendarModel}: {|
 	userController?: IUserController,
 	distributor?: CalendarUpdateDistributor,
 	mailboxDetail?: MailboxDetail,
 	calendars: Map<Id, CalendarInfo>,
 	calendarModel?: CalendarModel,
 	existingEvent: ?CalendarEvent,
-}): CalendarEventViewModel {
+|}): CalendarEventViewModel {
 	return new CalendarEventViewModel(
 		userController || makeUserController(),
 		distributor || makeDistributor(),
